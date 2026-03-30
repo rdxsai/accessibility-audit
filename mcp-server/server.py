@@ -329,13 +329,94 @@ def get_related_criteria(sc_id: str) -> dict:
     }
 
 
+## ──────────────────────────────────────────────
+# HTTP API — plain REST endpoint for the Chrome extension.
+#
+# The MCP transport (stdio/SSE) is for MCP clients.
+# But our Chrome extension service worker uses fetch(),
+# so we also expose tools as a simple HTTP POST endpoint.
+#
+# POST /api/tool
+# Body: { "name": "get_success_criterion", "args": { "sc_id": "1.4.3" } }
+# Response: the tool's return value as JSON
+# ──────────────────────────────────────────────
+
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Route
+from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
+import json as json_module
+
+# Map tool names to their functions
+TOOL_FUNCTIONS = {
+    "get_success_criterion": get_success_criterion,
+    "get_technique": get_technique,
+    "verify_violation": verify_violation,
+    "get_related_criteria": get_related_criteria,
+}
+
+
+async def handle_tool_call(request: Request) -> JSONResponse:
+    """Handle a tool call from the Chrome extension."""
+    try:
+        body = await request.json()
+        tool_name = body.get("name")
+        args = body.get("args", {})
+
+        if tool_name not in TOOL_FUNCTIONS:
+            return JSONResponse(
+                {"error": f"Unknown tool: {tool_name}"},
+                status_code=400,
+            )
+
+        result = TOOL_FUNCTIONS[tool_name](**args)
+        return JSONResponse(result)
+
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def health(request: Request) -> JSONResponse:
+    return JSONResponse({"status": "ok", "tools": list(TOOL_FUNCTIONS.keys())})
+
+
+app = Starlette(
+    routes=[
+        Route("/api/tool", handle_tool_call, methods=["POST"]),
+        Route("/health", health, methods=["GET"]),
+    ],
+    middleware=[
+        Middleware(
+            CORSMiddleware,
+            allow_origins=["*"],  # Chrome extension needs CORS
+            allow_methods=["POST", "GET"],
+            allow_headers=["*"],
+        ),
+    ],
+)
+
+
 if __name__ == "__main__":
     import sys
 
-    transport = "stdio"
-    if "--transport" in sys.argv:
-        idx = sys.argv.index("--transport")
-        if idx + 1 < len(sys.argv):
-            transport = sys.argv[idx + 1]
-
-    mcp.run(transport=transport)
+    if "--http" in sys.argv:
+        # Run as HTTP server for the Chrome extension
+        import uvicorn
+        port = 8000
+        if "--port" in sys.argv:
+            idx = sys.argv.index("--port")
+            if idx + 1 < len(sys.argv):
+                port = int(sys.argv[idx + 1])
+        print(f"WCAG MCP Server running at http://localhost:{port}")
+        print(f"  Tools: {list(TOOL_FUNCTIONS.keys())}")
+        uvicorn.run(app, host="0.0.0.0", port=port)
+    else:
+        # Run as MCP server (stdio or SSE)
+        transport = "stdio"
+        if "--transport" in sys.argv:
+            idx = sys.argv.index("--transport")
+            if idx + 1 < len(sys.argv):
+                transport = sys.argv[idx + 1]
+        mcp.run(transport=transport)

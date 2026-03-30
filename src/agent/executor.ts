@@ -133,44 +133,28 @@ async function captureScreenshot(): Promise<{
 
 // ─── MCP server HTTP call ────────────────────
 //
-// The MCP server exposes tools via HTTP. We call
-// them using the MCP-over-HTTP convention:
-// POST /call-tool with { name, arguments }
-//
-// In production, this could also use the MCP stdio
-// transport, but HTTP is simpler for a Chrome extension
-// since service workers can make fetch() calls but
-// can't spawn child processes.
+// Plain REST call to the WCAG server:
+// POST /api/tool { name, args } → tool result as JSON
 
 async function callMcpTool(
   toolName: string,
   args: Record<string, unknown>
 ): Promise<unknown> {
   try {
-    const response = await fetch(`${MCP_SERVER_URL}/mcp`, {
+    const response = await fetch(`${MCP_SERVER_URL}/api/tool`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        method: 'tools/call',
-        params: { name: toolName, arguments: args },
-        id: Date.now(),
-      }),
+      body: JSON.stringify({ name: toolName, args }),
     });
 
     if (!response.ok) {
       return { error: `MCP server error: ${response.status}` };
     }
 
-    const result = await response.json();
-    // MCP response has result.content[0].text with JSON
-    if (result.result?.content?.[0]?.text) {
-      return JSON.parse(result.result.content[0].text);
-    }
-    return result.result ?? result;
+    return await response.json();
   } catch (e) {
     return {
-      error: `MCP server unreachable at ${MCP_SERVER_URL}. Is it running?`,
+      error: `MCP server unreachable at ${MCP_SERVER_URL}. Is it running? Start with: python server.py --http`,
     };
   }
 }
