@@ -68,23 +68,26 @@ async function handleChatMessage(
   text: string,
   sendResponse: (response: unknown) => void
 ): Promise<void> {
+  // Respond immediately — don't hold the message channel open.
+  // The actual response streams back via CHAT_RESPONSE messages.
+  sendResponse({ ok: true });
+
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) {
-    sendResponse({ text: 'Error: No active tab found.', done: true });
+    chrome.runtime.sendMessage({
+      type: 'CHAT_RESPONSE',
+      payload: { text: 'Error: No active tab found.', done: true },
+    });
     return;
   }
 
-  // Run the agent — it will call tools and stream the response
-  await runAgent(text, tab.id, (responseText, done) => {
-    // Send each chunk to the side panel via messaging
+  // Run the agent — it calls tools and sends the response via onChunk
+  runAgent(text, tab.id, (responseText, done) => {
     chrome.runtime.sendMessage({
       type: 'CHAT_RESPONSE',
       payload: { text: responseText, done },
     });
   });
-
-  // sendResponse with confirmation (the actual response streams via CHAT_RESPONSE)
-  sendResponse({ ok: true });
 }
 
 console.log('[WCAG Scout] Service worker loaded');
