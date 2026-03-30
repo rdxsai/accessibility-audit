@@ -116,6 +116,12 @@ function inlineContentScript() {
           }
         }
       }
+
+      // Copy the highlight CSS for the content script
+      const highlightCss = resolve(__dirname, 'src/content/highlight.css');
+      if (fs.existsSync(highlightCss)) {
+        fs.copyFileSync(highlightCss, resolve(distDir, 'content.css'));
+      }
     },
   };
 }

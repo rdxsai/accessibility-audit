@@ -1,0 +1,8 @@
+/* Injected by the content script to highlight flagged elements */
+
+[data-wcag-scout-highlight="true"] {
+  outline: 3px dashed #f59e0b !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.2) !important;
+  transition: outline 0.2s ease, box-shadow 0.2s ease !important;
+}

@@ -1,5 +1,7 @@
 import axe from 'axe-core';
 import type { Message, Violation, ViolationNode } from '@shared/messages';
+// highlight.css is loaded via manifest.json content_scripts.css
+// (not imported here — Vite would extract it as a separate chunk)
 import { getPageDimensions } from './tools/screenshot';
 import { getDomSnapshot } from './tools/dom-snapshot';
 import { getComputedStyles } from './tools/computed-styles';
