@@ -1,0 +1,7 @@
+node_modules/
+dist/
+mcp-server/venv/
+mcp-server/wcag.db
+mcp-server/__pycache__/
+*.pyc
+.DS_Store
