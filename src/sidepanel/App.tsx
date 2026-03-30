@@ -1,76 +1,235 @@
-import React, { useState } from 'react';
-import type { Violation } from '@shared/messages';
+import React, { useState, useEffect, useRef } from 'react';
+
+// ──────────────────────────────────────────────
+// Side panel — the user-facing UI.
+//
+// Three states:
+//   1. Setup — no API key configured yet
+//   2. Ready — key set, waiting for user action
+//   3. Chat — conversation with the agent
+//
+// The scan flow:
+//   User clicks "Scan Page" or types a message
+//   → sends CHAT_MESSAGE to service worker
+//   → agent runs tools, streams response back
+//   → we listen for CHAT_RESPONSE messages
+//   → display in the chat view
+// ──────────────────────────────────────────────
+
+interface ChatEntry {
+  role: 'user' | 'assistant';
+  text: string;
+}
 
 export default function App() {
-  const [violations, setViolations] = useState<Violation[]>([]);
-  const [scanning, setScanning] = useState(false);
+  const [apiKey, setApiKey] = useState('');
+  const [hasKey, setHasKey] = useState(false);
+  const [chat, setChat] = useState<ChatEntry[]>([]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
 
-  const handleScan = async () => {
-    setScanning(true);
-    chrome.runtime.sendMessage(
-      { type: 'SCAN_REQUEST', payload: { scope: 'full' } },
-      (response: { violations: Violation[] }) => {
-        setViolations(response?.violations ?? []);
-        setScanning(false);
+  // Check if API key is already stored
+  useEffect(() => {
+    chrome.storage.local.get('gemini_api_key', (result) => {
+      if (result.gemini_api_key) {
+        setHasKey(true);
       }
-    );
+    });
+  }, []);
+
+  // Listen for streamed responses from the agent
+  useEffect(() => {
+    const listener = (message: any) => {
+      if (message.type === 'CHAT_RESPONSE') {
+        setChat((prev) => {
+          // If the last entry is from assistant and not done, append
+          const last = prev[prev.length - 1];
+          if (last?.role === 'assistant' && !message.payload.done) {
+            return [
+              ...prev.slice(0, -1),
+              { role: 'assistant', text: last.text + message.payload.text },
+            ];
+          }
+          // Otherwise add new assistant entry
+          if (last?.role === 'assistant') {
+            // Replace the placeholder with final text
+            return [
+              ...prev.slice(0, -1),
+              { role: 'assistant', text: message.payload.text },
+            ];
+          }
+          return [...prev, { role: 'assistant', text: message.payload.text }];
+        });
+        if (message.payload.done) {
+          setLoading(false);
+        }
+      }
+    };
+
+    chrome.runtime.onMessage.addListener(listener);
+    return () => chrome.runtime.onMessage.removeListener(listener);
+  }, []);
+
+  // Auto-scroll chat
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chat]);
+
+  const saveApiKey = () => {
+    if (!apiKey.trim()) return;
+    chrome.runtime.sendMessage({
+      type: 'SET_API_KEY',
+      payload: { key: apiKey.trim() },
+    });
+    setHasKey(true);
   };
 
+  const sendMessage = (text: string) => {
+    if (!text.trim() || loading) return;
+
+    setChat((prev) => [...prev, { role: 'user', text }]);
+    setInput('');
+    setLoading(true);
+
+    chrome.runtime.sendMessage({
+      type: 'CHAT_MESSAGE',
+      payload: { text },
+    });
+  };
+
+  const handleScan = () => {
+    sendMessage('Scan this page for accessibility violations. Run both the automated axe-core scan and your manual review.');
+  };
+
+  // ─── Setup screen ──────────────────────────
+  if (!hasKey) {
+    return (
+      <div className="min-h-screen bg-gray-950 text-gray-100 p-5 flex flex-col justify-center">
+        <div className="mb-6">
+          <h1 className="text-xl font-bold text-amber-400">WCAG Scout</h1>
+          <p className="text-sm text-gray-400 mt-1">AI Accessibility Scanner</p>
+        </div>
+
+        <div className="space-y-3">
+          <label className="block text-sm text-gray-300">
+            Gemini API Key
+          </label>
+          <input
+            type="password"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && saveApiKey()}
+            placeholder="AIza..."
+            className="w-full rounded-md bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-amber-500"
+          />
+          <button
+            onClick={saveApiKey}
+            className="w-full rounded-md bg-amber-500 px-4 py-2 text-sm font-medium text-gray-900 hover:bg-amber-400"
+          >
+            Save & Start
+          </button>
+          <p className="text-xs text-gray-500">
+            Get a key from{' '}
+            <span className="text-amber-500">aistudio.google.com</span>
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Main chat screen ──────────────────────
   return (
-    <div className="min-h-screen bg-gray-50 p-4">
-      <header className="mb-4">
-        <h1 className="text-lg font-bold text-gray-900">WCAG Scout</h1>
-        <p className="text-sm text-gray-500">AI Accessibility Scanner</p>
+    <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col">
+      {/* Header */}
+      <header className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+        <div>
+          <h1 className="text-base font-bold text-amber-400">WCAG Scout</h1>
+          <p className="text-xs text-gray-500">AI Accessibility Scanner</p>
+        </div>
+        <button
+          onClick={handleScan}
+          disabled={loading}
+          className="rounded-md bg-amber-500 px-3 py-1.5 text-xs font-medium text-gray-900 hover:bg-amber-400 disabled:opacity-50"
+        >
+          {loading ? 'Scanning...' : 'Scan Page'}
+        </button>
       </header>
 
-      <button
-        onClick={handleScan}
-        disabled={scanning}
-        className="w-full rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-      >
-        {scanning ? 'Scanning...' : 'Scan Page'}
-      </button>
-
-      <div className="mt-4">
-        {violations.length === 0 ? (
-          <p className="text-sm text-gray-400 text-center mt-8">
-            {scanning ? 'Analyzing page...' : 'Click "Scan Page" to start'}
-          </p>
-        ) : (
-          <div className="space-y-3">
-            <p className="text-sm font-medium text-gray-700">
-              Found {violations.length} violation{violations.length !== 1 && 's'}
+      {/* Chat area */}
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+        {chat.length === 0 && !loading && (
+          <div className="text-center mt-12 space-y-3">
+            <p className="text-sm text-gray-500">
+              Click <strong className="text-amber-400">Scan Page</strong> to run a full audit, or ask a question below.
             </p>
-            {violations.map((v, i) => (
-              <div
-                key={`${v.id}-${i}`}
-                className="rounded-md border border-gray-200 bg-white p-3"
-              >
-                <div className="flex items-center gap-2">
-                  <span className={`inline-block rounded px-1.5 py-0.5 text-xs font-medium ${impactColor(v.impact)}`}>
-                    {v.impact}
-                  </span>
-                  <span className="text-sm font-medium text-gray-800">{v.id}</span>
-                </div>
-                <p className="mt-1 text-xs text-gray-600">{v.description}</p>
-                <p className="mt-1 text-xs text-gray-400">
-                  {v.nodes.length} element{v.nodes.length !== 1 && 's'} affected
-                </p>
-              </div>
-            ))}
+            <div className="space-y-2">
+              {[
+                'Scan this page for accessibility issues',
+                'Check the color contrast on this page',
+                'Are there any missing ARIA attributes?',
+              ].map((suggestion) => (
+                <button
+                  key={suggestion}
+                  onClick={() => sendMessage(suggestion)}
+                  className="block w-full text-left rounded-md border border-gray-800 bg-gray-900 px-3 py-2 text-xs text-gray-400 hover:border-gray-600 hover:text-gray-300"
+                >
+                  {suggestion}
+                </button>
+              ))}
+            </div>
           </div>
         )}
+
+        {chat.map((entry, i) => (
+          <div key={i} className={entry.role === 'user' ? 'flex justify-end' : ''}>
+            <div
+              className={`rounded-lg px-3 py-2 text-sm max-w-[90%] ${
+                entry.role === 'user'
+                  ? 'bg-amber-500/20 text-amber-100'
+                  : 'bg-gray-800 text-gray-200'
+              }`}
+            >
+              {entry.role === 'assistant' ? (
+                <div className="whitespace-pre-wrap leading-relaxed">{entry.text}</div>
+              ) : (
+                <p>{entry.text}</p>
+              )}
+            </div>
+          </div>
+        ))}
+
+        {loading && chat[chat.length - 1]?.role === 'user' && (
+          <div className="flex items-center gap-2 text-gray-500 text-xs">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+            Analyzing page...
+          </div>
+        )}
+
+        <div ref={chatEndRef} />
+      </div>
+
+      {/* Input area */}
+      <div className="px-4 py-3 border-t border-gray-800">
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && sendMessage(input)}
+            placeholder="Ask about accessibility..."
+            disabled={loading}
+            className="flex-1 rounded-md bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-amber-500 disabled:opacity-50"
+          />
+          <button
+            onClick={() => sendMessage(input)}
+            disabled={loading || !input.trim()}
+            className="rounded-md bg-amber-500 px-3 py-2 text-sm font-medium text-gray-900 hover:bg-amber-400 disabled:opacity-50"
+          >
+            Send
+          </button>
+        </div>
       </div>
     </div>
   );
-}
-
-function impactColor(impact: string): string {
-  switch (impact) {
-    case 'critical': return 'bg-red-100 text-red-700';
-    case 'serious':  return 'bg-orange-100 text-orange-700';
-    case 'moderate': return 'bg-yellow-100 text-yellow-700';
-    case 'minor':    return 'bg-blue-100 text-blue-700';
-    default:         return 'bg-gray-100 text-gray-700';
-  }
 }
