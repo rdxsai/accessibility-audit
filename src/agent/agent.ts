@@ -111,84 +111,123 @@ export async function runAgent(
 }
 
 // ──────────────────────────────────────────────
-// Build the data message for the LLM.
-// Same as before — comprehensive summary of ALL collected data.
+// Build the data message for the LLM from Stage 1 + Stage 2 results.
 // ──────────────────────────────────────────────
 
 function buildDataMessage(data: PageAuditData): string {
-  const s = data.summary;
+  const { stage2: s2 } = data;
 
-  let msg = `I've scanned the page at ${data.url}. Here is the COMPLETE audit data. Analyze ALL of it and produce a full accessibility report.\n\n`;
+  let msg = `Page: ${data.url}\nComplete audit data below. Analyze ALL of it. Report ALL issues.\n\n`;
 
-  msg += `## TIER 1: axe-core Scan Results\n`;
-  msg += `Found ${s.totalAxeViolations} automated violations:\n\n`;
+  // ─── Stage 1: axe-core ─────────────────────
+  msg += `## STAGE 1: axe-core (${data.axeViolations.length} violations)\n\n`;
   for (const v of data.axeViolations) {
-    msg += `### [${v.impact.toUpperCase()}] ${v.id}\n`;
-    msg += `- Description: ${v.description}\n`;
-    msg += `- WCAG tags: ${v.wcagTags.join(', ')}\n`;
-    msg += `- Elements affected: ${v.nodes.length}\n`;
-    for (const node of v.nodes.slice(0, 5)) {
-      msg += `  - Selector: ${node.target.join(' > ')}\n`;
-      msg += `    HTML: ${node.html.slice(0, 150)}\n`;
-      msg += `    Why: ${node.failureSummary.split('\n')[0]}\n`;
+    msg += `[${v.impact.toUpperCase()}] ${v.id}: ${v.description}\n`;
+    msg += `  WCAG: ${v.wcagTags.join(', ')}, ${v.nodes.length} elements\n`;
+    for (const node of v.nodes.slice(0, 3)) {
+      msg += `  - ${node.target.join(' > ')}: ${node.html.slice(0, 120)}\n`;
     }
     msg += '\n';
   }
 
-  msg += `## TIER 2: Navigation Link Contrast\n`;
-  msg += `Checked ${s.totalNavLinks} nav links. ${s.navLinksWithLowContrast} have contrast below 4.5:1.\n\n`;
-  for (const style of data.navLinkStyles) {
-    const flag = style.contrastRatio !== null && style.contrastRatio < 4.5 ? ' FAILS' : ' PASSES';
-    msg += `- ${style.selector}: color=${style.color}, bg=${style.backgroundColor}, contrast=${style.contrastRatio ?? 'unknown'}:1, fontSize=${style.fontSize}${flag}\n`;
+  // ─── Stage 2: Contrast ─────────────────────
+  msg += `## STAGE 2a: Contrast Audit\n`;
+  msg += `Scanned ${s2.contrast.totalTextElements} text elements (${s2.contrast.uniqueColorCombos} unique color combos).\n`;
+  msg += `Failures: ${s2.contrast.failures.length}, Passes: ${s2.contrast.passes}\n\n`;
+  for (const f of s2.contrast.failures) {
+    msg += `FAIL: "${f.text}" at ${f.selector}\n`;
+    msg += `  fg=${f.fgColor}, bg=${f.bgColor}, ratio=${f.contrastRatio}:1\n`;
+    msg += `  fontSize=${f.fontSize}, fontWeight=${f.fontWeight}, isLarge=${f.isLargeText}, required=${f.requiredRatio}:1\n\n`;
+  }
+
+  // ─── Stage 2: ARIA ─────────────────────────
+  msg += `## STAGE 2b: ARIA Audit\n`;
+  msg += `Buttons: ${s2.aria.totalButtons} total, ${s2.aria.buttonsWithIssues.length} with issues\n`;
+  for (const b of s2.aria.buttonsWithIssues) {
+    msg += `  ${b.element} at ${b.selector}: ${b.details}\n`;
+  }
+  msg += `Sections: ${s2.aria.totalSections} total, ${s2.aria.sectionsWithIssues.length} without accessible name\n`;
+  for (const s of s2.aria.sectionsWithIssues) {
+    msg += `  ${s.element} at ${s.selector}\n`;
+  }
+  msg += `Decorative (canvas/svg): ${s2.aria.totalDecorativeElements} total, ${s2.aria.decorativeWithIssues.length} not hidden\n`;
+  for (const d of s2.aria.decorativeWithIssues) {
+    msg += `  ${d.element} at ${d.selector}: ${d.details}\n`;
+  }
+  msg += `Inputs: ${s2.aria.totalInputs} total, ${s2.aria.inputsWithIssues.length} without labels\n`;
+  for (const inp of s2.aria.inputsWithIssues) {
+    msg += `  ${inp.element} at ${inp.selector}: ${inp.details}\n`;
   }
   msg += '\n';
 
-  msg += `## TIER 2: Button ARIA States\n`;
-  msg += `Checked ${s.totalButtons} buttons. ${s.buttonsWithoutAriaExpanded} have click listeners but no aria-expanded.\n\n`;
-  for (const btn of data.buttonInteractions) {
-    msg += `- "${btn.textContent.slice(0, 40)}": `;
-    msg += `role=${btn.role ?? 'none'}, `;
-    msg += `aria-expanded=${btn.ariaExpanded ?? 'MISSING'}, `;
-    msg += `aria-controls=${btn.ariaControls ?? 'MISSING'}, `;
-    msg += `hasClick=${btn.hasClickListener}\n`;
+  // ─── Stage 2: Motion ───────────────────────
+  msg += `## STAGE 2c: Motion Audit\n`;
+  msg += `prefers-reduced-motion in CSS: ${s2.motion.hasReducedMotionCSS}\n`;
+  if (s2.motion.reducedMotionCSSRules.length > 0) {
+    msg += `  Rules: ${s2.motion.reducedMotionCSSRules.join(', ')}\n`;
+  }
+  msg += `prefers-reduced-motion in JS: ${s2.motion.hasReducedMotionJS}\n`;
+  if (s2.motion.scriptSnippets.length > 0) {
+    msg += `  Snippets: ${s2.motion.scriptSnippets.join('; ')}\n`;
+  }
+  msg += `CSS animations: ${s2.motion.cssAnimations.length}\n`;
+  for (const a of s2.motion.cssAnimations) {
+    msg += `  ${a.selector}: ${a.animationName} (${a.duration}, ${a.iterationCount})\n`;
+  }
+  msg += `Canvas elements: ${s2.motion.canvasElements.length}\n`;
+  for (const c of s2.motion.canvasElements) {
+    msg += `  ${c.selector}: aria-hidden=${c.ariaHidden ?? 'MISSING'}\n`;
+  }
+  msg += `CSS transitions: ${s2.motion.totalCSSTransitions}\n\n`;
+
+  // ─── Stage 2: Target Size ──────────────────
+  msg += `## STAGE 2d: Target Size Audit (44x44px)\n`;
+  msg += `Checked ${s2.targetSize.checkedElements} of ${s2.targetSize.totalInteractiveElements} interactive elements\n`;
+  msg += `Below 24px: ${s2.targetSize.failuresBelow24.length}, Below 44px: ${s2.targetSize.failuresBelow44.length}\n`;
+  for (const f of s2.targetSize.failuresBelow24) {
+    msg += `  CRITICAL: ${f.element} at ${f.selector} — ${f.width}x${f.height}px\n`;
+  }
+  for (const f of s2.targetSize.failuresBelow44.slice(0, 10)) {
+    msg += `  WARNING: ${f.element} at ${f.selector} — ${f.width}x${f.height}px\n`;
   }
   msg += '\n';
 
-  msg += `## TIER 2: Focus Order & Visibility\n`;
-  msg += `Total focusable elements: ${s.totalFocusableElements}\n`;
-  msg += `Elements without visible focus style: ${s.elementsWithoutVisibleFocus}\n`;
-  msg += `Skip navigation link present: ${s.hasSkipLink}\n\n`;
-  for (const entry of data.focusOrder.entries.slice(0, 20)) {
-    const icon = entry.hasVisibleFocusStyle ? 'VISIBLE' : 'NOT_VISIBLE';
-    msg += `[${entry.index}] <${entry.tagName}> "${entry.textContent.slice(0, 30)}" — focus: ${icon}, outline: ${entry.outlineStyle} ${entry.outlineColor}\n`;
+  // ─── Stage 2: Focus ────────────────────────
+  msg += `## STAGE 2e: Focus Audit\n`;
+  msg += `Skip link: ${s2.focus.hasSkipLink ? 'YES' : 'NO'}\n`;
+  msg += `First focusable: ${s2.focus.firstFocusableElement} "${s2.focus.firstFocusableText}"\n`;
+  msg += `:focus-visible CSS rules: ${s2.focus.focusVisibleRules.length}\n`;
+  for (const r of s2.focus.focusVisibleRules) {
+    msg += `  ${r.selectorText} → ${r.properties.join(', ')}\n`;
+  }
+  msg += `:focus CSS rules: ${s2.focus.focusRules.length}\n`;
+  for (const r of s2.focus.focusRules) {
+    msg += `  ${r.selectorText} → ${r.properties.join(', ')}\n`;
+  }
+  msg += `Elements WITH custom focus: ${s2.focus.elementsWithCustomFocus.length}\n`;
+  for (const e of s2.focus.elementsWithCustomFocus.slice(0, 5)) {
+    msg += `  ${e}\n`;
+  }
+  msg += `Elements WITHOUT custom focus: ${s2.focus.elementsWithoutCustomFocus.length}\n`;
+  for (const e of s2.focus.elementsWithoutCustomFocus) {
+    msg += `  ${e}\n`;
   }
   msg += '\n';
 
-  msg += `## TIER 2: Landmark Structure\n`;
-  msg += `Total sections: ${s.totalSections}, without accessible name: ${s.sectionsWithoutAccessibleName}\n`;
-  msg += `Landmark count: ${data.domSnapshot.landmarkCount}, Heading count: ${data.domSnapshot.headingCount}\n\n`;
+  // ─── Quick flags ───────────────────────────
+  msg += `## FLAGS\n`;
+  if (s2.contrast.failures.length > 0) msg += `- ${s2.contrast.failures.length} text elements fail contrast\n`;
+  if (s2.aria.buttonsWithIssues.length > 0) msg += `- ${s2.aria.buttonsWithIssues.length} buttons have ARIA issues\n`;
+  if (s2.aria.sectionsWithIssues.length > 0) msg += `- ${s2.aria.sectionsWithIssues.length} sections missing accessible name\n`;
+  if (s2.aria.decorativeWithIssues.length > 0) msg += `- ${s2.aria.decorativeWithIssues.length} decorative elements not hidden from AT\n`;
+  if (s2.aria.inputsWithIssues.length > 0) msg += `- ${s2.aria.inputsWithIssues.length} inputs without labels\n`;
+  if (!s2.focus.hasSkipLink) msg += `- No skip navigation link\n`;
+  if (s2.focus.elementsWithoutCustomFocus.length > 0) msg += `- ${s2.focus.elementsWithoutCustomFocus.length} elements without custom focus style\n`;
+  if (!s2.motion.hasReducedMotionCSS && !s2.motion.hasReducedMotionJS) msg += `- No prefers-reduced-motion support\n`;
+  if (s2.targetSize.failuresBelow24.length > 0) msg += `- ${s2.targetSize.failuresBelow24.length} targets below 24px minimum\n`;
+  if (s2.targetSize.failuresBelow44.length > 0) msg += `- ${s2.targetSize.failuresBelow44.length} targets below 44px best practice\n`;
 
-  msg += `## TIER 2: Motion & Animation\n`;
-  msg += `CSS animations: ${data.motionCheck.cssAnimations.length}\n`;
-  msg += `CSS transitions: ${data.motionCheck.cssTransitionCount}\n`;
-  msg += `Canvas elements: ${data.motionCheck.canvasElements.length}\n`;
-  msg += `prefers-reduced-motion in CSS: ${s.hasReducedMotionQuery}\n`;
-  msg += `Canvas without aria-hidden: ${s.canvasElementsWithoutAriaHidden}\n`;
-  for (const c of data.motionCheck.canvasElements) {
-    msg += `- ${c.selector}: aria-hidden=${c.ariaHidden ?? 'MISSING'}, size=${c.width}x${c.height}\n`;
-  }
-  msg += '\n';
-
-  msg += `## QUICK FLAGS\n`;
-  if (s.navLinksWithLowContrast > 0) msg += `- ${s.navLinksWithLowContrast} nav links fail contrast\n`;
-  if (s.buttonsWithoutAriaExpanded > 0) msg += `- ${s.buttonsWithoutAriaExpanded} toggle buttons missing aria-expanded\n`;
-  if (s.elementsWithoutVisibleFocus > 0) msg += `- ${s.elementsWithoutVisibleFocus} elements have no visible focus indicator\n`;
-  if (!s.hasSkipLink) msg += `- No skip navigation link\n`;
-  if (s.sectionsWithoutAccessibleName > 0) msg += `- ${s.sectionsWithoutAccessibleName} sections missing accessible name\n`;
-  if (!s.hasReducedMotionQuery) msg += `- No prefers-reduced-motion query\n`;
-  if (s.canvasElementsWithoutAriaHidden > 0) msg += `- ${s.canvasElementsWithoutAriaHidden} canvas elements without aria-hidden\n`;
-
-  msg += `\nUse verify_violation for EACH issue above before reporting it. Report ALL issues found — do not skip any.`;
+  msg += `\nVerify each flagged issue with verify_violation before reporting. Report ALL issues.`;
 
   return msg;
 }

@@ -1,7 +1,7 @@
 import axe from 'axe-core';
 import type { Message, Violation, ViolationNode } from '@shared/messages';
+import { runAllAudits } from './audits';
 // highlight.css is loaded via manifest.json content_scripts.css
-// (not imported here — Vite would extract it as a separate chunk)
 import { getPageDimensions } from './tools/screenshot';
 import { getDomSnapshot } from './tools/dom-snapshot';
 import { getComputedStyles } from './tools/computed-styles';
@@ -50,6 +50,11 @@ chrome.runtime.onMessage.addListener(
 
       case 'CHECK_MOTION':
         sendResponse(checkMotion());
+        break;
+
+      // ─── Stage 2: Programmatic audits ─────
+      case 'RUN_AUDITS':
+        sendResponse(runAllAudits());
         break;
 
       // ─── Element discovery (for collector) ─
