@@ -229,6 +229,14 @@ function buildDataMessage(data: PageAuditData): string {
     }
   }
 
+  if (s2.aria.viewportIssues.length) {
+    msg += `### Viewport — ${s2.aria.viewportIssues.length} issues:\n`;
+    for (const v of s2.aria.viewportIssues) {
+      msg += `  - content="${v.content}"\n`;
+      msg += `    issue: ${v.issue}\n`;
+    }
+  }
+
   // ─── Stage 2c: Motion ───
   msg += `\n## STAGE 2c: Motion\n`;
   msg += `prefers-reduced-motion: CSS=${s2.motion.hasReducedMotionCSS}, JS=${s2.motion.hasReducedMotionJS}\n`;
@@ -295,7 +303,8 @@ function buildDataMessage(data: PageAuditData): string {
     s2.targetSize.failuresBelow44.length +
     s2.targetSize.failuresBelow24.length +
     (!s2.focus.skipLink.exists ? 1 : 0) +
-    (!s2.motion.hasReducedMotionCSS && !s2.motion.hasReducedMotionJS ? 1 : 0);
+    (!s2.motion.hasReducedMotionCSS && !s2.motion.hasReducedMotionJS ? 1 : 0) +
+    s2.aria.viewportIssues.length;
 
   msg += `\n## TOTALS: ${totalElements} element-level issues found.\n`;
   msg += `Verify each issue TYPE once (not per element). List EVERY element individually in the report. Do not summarize.\n`;

@@ -59,21 +59,29 @@ export function runContrastAudit(): ContrastAuditResult {
   // Walk the main document
   walkDocument(document, '');
 
-  // Walk same-origin iframes
-  try {
-    const iframes = document.querySelectorAll('iframe');
-    for (const iframe of iframes) {
-      try {
-        const iframeDoc = (iframe as HTMLIFrameElement).contentDocument;
-        if (iframeDoc?.body) {
-          const iframeSelector = buildSelector(iframe);
-          walkDocument(iframeDoc, `${iframeSelector} >> `);
+  // Recursively walk ALL same-origin iframes (including nested)
+  walkIframes(document, '');
+
+  function walkIframes(doc: Document, prefix: string) {
+    try {
+      const iframes = doc.querySelectorAll('iframe');
+      for (const iframe of iframes) {
+        try {
+          const iframeEl = iframe as HTMLIFrameElement;
+          const iframeDoc = iframeEl.contentDocument;
+          if (!iframeDoc?.body) continue;
+
+          const iframePrefix = prefix + buildSelector(iframe) + ' >> ';
+          walkDocument(iframeDoc, iframePrefix);
+
+          // Recurse into nested iframes
+          walkIframes(iframeDoc, iframePrefix);
+        } catch {
+          // Cross-origin iframe — can't access
         }
-      } catch {
-        // Cross-origin iframe — can't access contentDocument
       }
-    }
-  } catch {}
+    } catch {}
+  }
 
   function walkDocument(doc: Document, selectorPrefix: string) {
     const root = doc.body;

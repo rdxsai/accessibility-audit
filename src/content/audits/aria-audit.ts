@@ -24,6 +24,11 @@ export interface AriaFinding {
   role: string | null;
 }
 
+export interface ViewportIssue {
+  content: string;
+  issue: string;
+}
+
 export interface AriaAuditResult {
   totalButtons: number;
   buttonsWithIssues: AriaFinding[];
@@ -33,6 +38,7 @@ export interface AriaAuditResult {
   decorativeWithIssues: AriaFinding[];
   totalInputs: number;
   inputsWithIssues: AriaFinding[];
+  viewportIssues: ViewportIssue[];
 }
 
 export function runAriaAudit(): AriaAuditResult {
@@ -45,6 +51,7 @@ export function runAriaAudit(): AriaAuditResult {
     decorativeWithIssues: [],
     totalInputs: 0,
     inputsWithIssues: [],
+    viewportIssues: [],
   };
 
   // ─── 1. Buttons ────────────────────────────
@@ -229,6 +236,31 @@ export function runAriaAudit(): AriaAuditResult {
       });
     }
   });
+
+  // ─── 5. Viewport meta check (SC 1.4.4) ─────
+  // user-scalable=no or maximum-scale<2 prevents zooming
+  const viewportMeta = document.querySelector('meta[name="viewport"]');
+  if (viewportMeta) {
+    const content = viewportMeta.getAttribute('content') ?? '';
+
+    if (/user-scalable\s*=\s*no/i.test(content)) {
+      result.viewportIssues.push({
+        content,
+        issue: 'user-scalable=no prevents users from zooming — violates SC 1.4.4 (Resize Text)',
+      });
+    }
+
+    const maxScaleMatch = content.match(/maximum-scale\s*=\s*([\d.]+)/i);
+    if (maxScaleMatch) {
+      const maxScale = parseFloat(maxScaleMatch[1]);
+      if (maxScale < 2) {
+        result.viewportIssues.push({
+          content,
+          issue: `maximum-scale=${maxScale} restricts zoom below 200% — violates SC 1.4.4 (Resize Text)`,
+        });
+      }
+    }
+  }
 
   return result;
 }
