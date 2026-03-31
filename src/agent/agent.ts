@@ -176,60 +176,129 @@ function buildDataMessage(data: PageAuditData): string {
     return `Page: ${data.url}\n\nStage 2 audits returned no data. axe-core found:\n${JSON.stringify(data.axeViolations, null, 2)}\n\nReport axe-core violations only.`;
   }
 
-  let msg = `Page: ${data.url}\n\n`;
+  let msg = `Page: ${data.url}\nReport EVERY element individually. Do NOT summarize as "several" or "multiple".\n\n`;
 
-  msg += `## STAGE 1: axe-core (${data.axeViolations.length} violations)\n`;
+  // ─── Stage 1: axe-core (every element listed) ───
+  msg += `## STAGE 1: axe-core (${data.axeViolations.length} rule violations)\n`;
   for (const v of data.axeViolations) {
-    msg += `[${v.impact}] ${v.id}: ${v.description} (${v.nodes.length} elements, ${v.wcagTags.join(',')})\n`;
-    for (const n of v.nodes.slice(0, 3)) msg += `  ${n.target.join(' > ')}: ${n.html.slice(0, 120)}\n`;
+    msg += `\n### [${v.impact}] ${v.id}: ${v.description}\n`;
+    msg += `WCAG: ${v.wcagTags.join(', ')}\n`;
+    msg += `${v.nodes.length} elements:\n`;
+    for (const n of v.nodes) {
+      msg += `  - selector: ${n.target.join(' > ')}\n`;
+      msg += `    html: ${n.html.slice(0, 200)}\n`;
+      msg += `    reason: ${n.failureSummary.split('\n')[0]}\n`;
+    }
   }
 
-  msg += `\n## STAGE 2a: Contrast — ${s2.contrast.failures.length} failures\n`;
-  for (const f of s2.contrast.failures) msg += `FAIL: "${f.text}" ratio=${f.contrastRatio}:1 (need ${f.requiredRatio}:1) fg=${f.fgColor} bg=${f.bgColor} size=${f.fontSize}\n`;
+  // ─── Stage 2a: Contrast (every failure) ───
+  msg += `\n## STAGE 2a: Contrast — ${s2.contrast.failures.length} failing elements (${s2.contrast.totalTextElements} scanned)\n`;
+  for (const f of s2.contrast.failures) {
+    msg += `  - selector: ${f.selector}\n`;
+    msg += `    text: "${f.text}"\n`;
+    msg += `    ratio: ${f.contrastRatio}:1 (required: ${f.requiredRatio}:1)\n`;
+    msg += `    fg: ${f.fgColor}, bg: ${f.bgColor}, size: ${f.fontSize}, weight: ${f.fontWeight}\n`;
+  }
 
+  // ─── Stage 2b: ARIA (every element) ───
   msg += `\n## STAGE 2b: ARIA\n`;
-  msg += `Buttons: ${s2.aria.buttonsWithIssues.length} issues\n`;
-  for (const b of s2.aria.buttonsWithIssues) msg += `  ${b.element}: ${b.details}\n`;
-  msg += `Sections: ${s2.aria.sectionsWithIssues.length} without name\n`;
-  for (const s of s2.aria.sectionsWithIssues) msg += `  ${s.element}\n`;
-  msg += `Decorative: ${s2.aria.decorativeWithIssues.length} not hidden\n`;
-  for (const d of s2.aria.decorativeWithIssues) msg += `  ${d.element}: ${d.details}\n`;
+  msg += `### Buttons — ${s2.aria.buttonsWithIssues.length} of ${s2.aria.totalButtons} have issues:\n`;
+  for (const b of s2.aria.buttonsWithIssues) {
+    msg += `  - selector: ${b.selector}\n`;
+    msg += `    element: ${b.element}\n`;
+    msg += `    issue: ${b.details}\n`;
+    msg += `    aria-expanded: ${b.ariaExpanded ?? 'MISSING'}, aria-controls: ${b.ariaControls ?? 'MISSING'}\n`;
+  }
+  msg += `### Sections — ${s2.aria.sectionsWithIssues.length} of ${s2.aria.totalSections} without accessible name:\n`;
+  for (const s of s2.aria.sectionsWithIssues) {
+    msg += `  - selector: ${s.selector}\n`;
+    msg += `    element: ${s.element}\n`;
+  }
+  msg += `### Decorative — ${s2.aria.decorativeWithIssues.length} not hidden from AT:\n`;
+  for (const d of s2.aria.decorativeWithIssues) {
+    msg += `  - selector: ${d.selector}\n`;
+    msg += `    element: ${d.element}\n`;
+    msg += `    issue: ${d.details}\n`;
+  }
   if (s2.aria.inputsWithIssues.length) {
-    msg += `Inputs: ${s2.aria.inputsWithIssues.length} without labels\n`;
-    for (const i of s2.aria.inputsWithIssues) msg += `  ${i.element}: ${i.details}\n`;
+    msg += `### Inputs — ${s2.aria.inputsWithIssues.length} without labels:\n`;
+    for (const i of s2.aria.inputsWithIssues) {
+      msg += `  - selector: ${i.selector}\n`;
+      msg += `    element: ${i.element}\n`;
+      msg += `    issue: ${i.details}\n`;
+    }
   }
 
+  // ─── Stage 2c: Motion ───
   msg += `\n## STAGE 2c: Motion\n`;
-  msg += `prefers-reduced-motion: CSS=${s2.motion.hasReducedMotionCSS} JS=${s2.motion.hasReducedMotionJS}\n`;
-  for (const a of s2.motion.cssAnimations) msg += `Animation: ${a.selector} ${a.animationName}\n`;
-  for (const c of s2.motion.canvasElements) msg += `Canvas: ${c.selector} aria-hidden=${c.ariaHidden ?? 'MISSING'}\n`;
-
-  msg += `\n## STAGE 2d: Focus\n`;
-  msg += `Skip link: ${s2.focus.skipLink.exists}\n`;
-  msg += `No focus style: ${s2.focus.noFocusStyle.length} elements\n`;
-  for (const f of s2.focus.noFocusStyle) msg += `  <${f.tagName}> "${f.textContent}"\n`;
-  msg += `Insufficient contrast: ${s2.focus.insufficientContrast.length}\n`;
-  msg += `Thin outline: ${s2.focus.thinOutline.length}\n`;
-  msg += `:focus-visible rules: ${s2.focus.focusVisibleRuleCount}\n`;
-
-  msg += `\n## STAGE 2e: Target Size — ${s2.targetSize.failuresBelow44.length} below 44px\n`;
-  for (const t of s2.targetSize.failuresBelow44.slice(0, 10)) msg += `  ${t.element} ${t.width}x${t.height}px\n`;
-  if (s2.targetSize.failuresBelow24.length) {
-    msg += `Critical (below 24px): ${s2.targetSize.failuresBelow24.length}\n`;
-    for (const t of s2.targetSize.failuresBelow24) msg += `  ${t.element} ${t.width}x${t.height}px\n`;
+  msg += `prefers-reduced-motion: CSS=${s2.motion.hasReducedMotionCSS}, JS=${s2.motion.hasReducedMotionJS}\n`;
+  for (const a of s2.motion.cssAnimations) {
+    msg += `  - animation: ${a.selector} — ${a.animationName} (${a.duration}, iterations: ${a.iterationCount})\n`;
+  }
+  for (const c of s2.motion.canvasElements) {
+    msg += `  - canvas: ${c.selector} — aria-hidden=${c.ariaHidden ?? 'MISSING'}, ${c.width}x${c.height}\n`;
   }
 
-  msg += `\n## FLAGS\n`;
-  if (s2.contrast.failures.length) msg += `- ${s2.contrast.failures.length} contrast failures\n`;
-  if (s2.aria.buttonsWithIssues.length) msg += `- ${s2.aria.buttonsWithIssues.length} buttons missing ARIA\n`;
-  if (s2.aria.sectionsWithIssues.length) msg += `- ${s2.aria.sectionsWithIssues.length} sections without name\n`;
-  if (s2.aria.decorativeWithIssues.length) msg += `- ${s2.aria.decorativeWithIssues.length} decorative not hidden\n`;
-  if (!s2.focus.skipLink.exists) msg += `- No skip link\n`;
-  if (s2.focus.noFocusStyle.length) msg += `- ${s2.focus.noFocusStyle.length} no focus indicator\n`;
-  if (!s2.motion.hasReducedMotionCSS && !s2.motion.hasReducedMotionJS) msg += `- No prefers-reduced-motion\n`;
-  if (s2.targetSize.failuresBelow44.length) msg += `- ${s2.targetSize.failuresBelow44.length} targets below 44px\n`;
+  // ─── Stage 2d: Focus (every element) ───
+  msg += `\n## STAGE 2d: Focus\n`;
+  msg += `Skip link: ${s2.focus.skipLink.exists}`;
+  if (s2.focus.skipLink.exists) {
+    msg += ` (${s2.focus.skipLink.selector}, target exists: ${s2.focus.skipLink.targetExists})`;
+  }
+  msg += `\n`;
+  if (s2.focus.noFocusStyle.length) {
+    msg += `### No focus indicator — ${s2.focus.noFocusStyle.length} elements:\n`;
+    for (const f of s2.focus.noFocusStyle) {
+      msg += `  - selector: ${f.selector}\n`;
+      msg += `    element: <${f.tagName}> "${f.textContent}"\n`;
+      msg += `    bg: ${f.backgroundColor}\n`;
+    }
+  }
+  if (s2.focus.insufficientContrast.length) {
+    msg += `### Insufficient focus indicator contrast — ${s2.focus.insufficientContrast.length} elements:\n`;
+    for (const f of s2.focus.insufficientContrast) {
+      msg += `  - selector: ${f.selector} — indicator contrast: ${f.indicatorContrast}:1 (need 3:1)\n`;
+    }
+  }
+  if (s2.focus.thinOutline.length) {
+    msg += `### Thin outline (< 2px) — ${s2.focus.thinOutline.length} elements:\n`;
+    for (const f of s2.focus.thinOutline) {
+      msg += `  - selector: ${f.selector} — ${f.outlineWidthPx}px outline\n`;
+    }
+  }
+  msg += `Good focus styles: ${s2.focus.goodFocusStyle} elements\n`;
+  msg += `:focus-visible CSS rules: ${s2.focus.focusVisibleRuleCount}, :focus rules: ${s2.focus.focusRuleCount}\n`;
 
-  msg += `\nVerify each issue. Report ALL. Deduplicate Stage 1 + Stage 2 overlaps. Group by severity.`;
+  // ─── Stage 2e: Target size (every element) ───
+  msg += `\n## STAGE 2e: Target Size\n`;
+  if (s2.targetSize.failuresBelow24.length) {
+    msg += `### Below 24px (critical) — ${s2.targetSize.failuresBelow24.length} elements:\n`;
+    for (const t of s2.targetSize.failuresBelow24) {
+      msg += `  - selector: ${t.selector} — ${t.element} — ${t.width}x${t.height}px\n`;
+    }
+  }
+  msg += `### Below 44px — ${s2.targetSize.failuresBelow44.length} elements:\n`;
+  for (const t of s2.targetSize.failuresBelow44) {
+    msg += `  - selector: ${t.selector} — ${t.element} — ${t.width}x${t.height}px\n`;
+  }
+
+  // ─── Totals ───
+  const totalElements =
+    data.axeViolations.reduce((sum, v) => sum + v.nodes.length, 0) +
+    s2.contrast.failures.length +
+    s2.aria.buttonsWithIssues.length +
+    s2.aria.sectionsWithIssues.length +
+    s2.aria.decorativeWithIssues.length +
+    s2.aria.inputsWithIssues.length +
+    s2.focus.noFocusStyle.length +
+    s2.focus.insufficientContrast.length +
+    s2.targetSize.failuresBelow44.length +
+    s2.targetSize.failuresBelow24.length +
+    (!s2.focus.skipLink.exists ? 1 : 0) +
+    (!s2.motion.hasReducedMotionCSS && !s2.motion.hasReducedMotionJS ? 1 : 0);
+
+  msg += `\n## TOTALS: ${totalElements} element-level issues found.\n`;
+  msg += `Verify each issue TYPE once (not per element). List EVERY element individually in the report. Do not summarize.\n`;
   return msg;
 }
 
