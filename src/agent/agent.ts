@@ -117,7 +117,7 @@ export async function runAgent(
 function buildDataMessage(data: PageAuditData): string {
   const { stage2: s2 } = data;
 
-  let msg = `Page: ${data.url}\nComplete audit data below. Analyze ALL of it. Report ALL issues.\n\n`;
+  let msg = `Page: ${data.url}\nTimestamp: ${new Date(data.timestamp).toISOString()}\n\nBelow is ALL audit data from Stages 1-3. Deduplicate overlapping findings (axe-core and Stage 2 may both flag the same contrast issue — merge them). Map each issue to a WCAG SC, assess severity, and produce the report.\n\n`;
 
   // ─── Stage 1: axe-core ─────────────────────
   msg += `## STAGE 1: axe-core (${data.axeViolations.length} violations)\n\n`;
@@ -260,7 +260,13 @@ function buildDataMessage(data: PageAuditData): string {
   if (s2.targetSize.failuresBelow24.length > 0) msg += `- ${s2.targetSize.failuresBelow24.length} targets below 24px minimum\n`;
   if (s2.targetSize.failuresBelow44.length > 0) msg += `- ${s2.targetSize.failuresBelow44.length} targets below 44px best practice\n`;
 
-  msg += `\nVerify each flagged issue with verify_violation before reporting. Report ALL issues.`;
+  msg += `\nINSTRUCTIONS:\n`;
+  msg += `1. Deduplicate: if Stage 1 and Stage 2 both flag the same issue, merge into one entry with the richer data.\n`;
+  msg += `2. Call verify_violation for each unique issue (pass finding + sc_id).\n`;
+  msg += `3. Group multiple elements with the same issue (e.g., "3 nav links" not 3 separate findings).\n`;
+  msg += `4. Assess severity: critical > serious > moderate > minor.\n`;
+  msg += `5. Output valid markdown with no formatting errors. Every code block needs a language tag.\n`;
+  msg += `6. Report ALL flagged issues. Do not skip any.\n`;
 
   return msg;
 }

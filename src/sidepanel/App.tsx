@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { marked } from 'marked';
 
 // ──────────────────────────────────────────────
 // Side panel — the user-facing UI.
@@ -232,7 +233,17 @@ export default function App() {
               }`}
             >
               {entry.role === 'assistant' ? (
-                <div className="whitespace-pre-wrap leading-relaxed">{entry.text}</div>
+                <div
+                  className="prose prose-invert prose-sm max-w-none leading-relaxed
+                    prose-headings:text-amber-400 prose-headings:font-bold prose-headings:mt-4 prose-headings:mb-2
+                    prose-h3:text-base prose-h4:text-sm
+                    prose-strong:text-gray-100
+                    prose-code:text-amber-300 prose-code:bg-gray-900 prose-code:px-1 prose-code:rounded
+                    prose-pre:bg-gray-900 prose-pre:border prose-pre:border-gray-700 prose-pre:rounded-md
+                    prose-li:text-gray-300 prose-p:text-gray-300
+                    prose-a:text-amber-400 prose-hr:border-gray-700"
+                  dangerouslySetInnerHTML={{ __html: marked.parse(entry.text) as string }}
+                />
               ) : (
                 <p>{entry.text}</p>
               )}
