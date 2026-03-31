@@ -5,7 +5,8 @@
   "description": "AI-powered accessibility scanner that explains WCAG violations in plain language",
   "permissions": ["activeTab", "sidePanel", "storage", "tabs"],
   "host_permissions": [
-    "http://localhost:*/*"
+    "http://localhost:*/*",
+    "https://api.openai.com/*"
   ],
   "background": {
     "service_worker": "background.js",

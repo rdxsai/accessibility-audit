@@ -39,7 +39,7 @@ chrome.runtime.onMessage.addListener(
       // API key configuration from side panel
       case 'SET_API_KEY' as any:
         setApiKey(message.payload.key);
-        chrome.storage.local.set({ gemini_api_key: message.payload.key });
+        chrome.storage.local.set({ openai_api_key: message.payload.key });
         sendResponse({ ok: true });
         break;
 

@@ -24,6 +24,7 @@ interface ChatEntry {
 export default function App() {
   const [apiKey, setApiKey] = useState('');
   const [hasKey, setHasKey] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [chat, setChat] = useState<ChatEntry[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -31,8 +32,8 @@ export default function App() {
 
   // Check if API key is already stored
   useEffect(() => {
-    chrome.storage.local.get('gemini_api_key', (result) => {
-      if (result.gemini_api_key) {
+    chrome.storage.local.get('openai_api_key', (result) => {
+      if (result.openai_api_key) {
         setHasKey(true);
       }
     });
@@ -113,14 +114,14 @@ export default function App() {
 
         <div className="space-y-3">
           <label className="block text-sm text-gray-300">
-            Gemini API Key
+            OpenAI API Key
           </label>
           <input
             type="password"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && saveApiKey()}
-            placeholder="AIza..."
+            placeholder="sk-..."
             className="w-full rounded-md bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-amber-500"
           />
           <button
@@ -131,7 +132,7 @@ export default function App() {
           </button>
           <p className="text-xs text-gray-500">
             Get a key from{' '}
-            <span className="text-amber-500">aistudio.google.com</span>
+            <span className="text-amber-500">platform.openai.com/api-keys</span>
           </p>
         </div>
       </div>
@@ -147,14 +148,54 @@ export default function App() {
           <h1 className="text-base font-bold text-amber-400">WCAG Scout</h1>
           <p className="text-xs text-gray-500">AI Accessibility Scanner</p>
         </div>
-        <button
-          onClick={handleScan}
-          disabled={loading}
-          className="rounded-md bg-amber-500 px-3 py-1.5 text-xs font-medium text-gray-900 hover:bg-amber-400 disabled:opacity-50"
-        >
-          {loading ? 'Scanning...' : 'Scan Page'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowSettings(!showSettings)}
+            className="rounded-md px-2 py-1.5 text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-800"
+            title="Settings"
+          >
+            {showSettings ? 'Close' : 'Key'}
+          </button>
+          <button
+            onClick={handleScan}
+            disabled={loading}
+            className="rounded-md bg-amber-500 px-3 py-1.5 text-xs font-medium text-gray-900 hover:bg-amber-400 disabled:opacity-50"
+          >
+            {loading ? 'Scanning...' : 'Scan Page'}
+          </button>
+        </div>
       </header>
+
+      {/* Inline settings panel */}
+      {showSettings && (
+        <div className="px-4 py-3 border-b border-gray-800 bg-gray-900 space-y-2">
+          <label className="block text-xs text-gray-400">OpenAI API Key</label>
+          <div className="flex gap-2">
+            <input
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  saveApiKey();
+                  setShowSettings(false);
+                }
+              }}
+              placeholder="sk-..."
+              className="flex-1 rounded-md bg-gray-800 border border-gray-700 px-3 py-1.5 text-xs text-gray-100 placeholder-gray-500 focus:outline-none focus:border-amber-500"
+            />
+            <button
+              onClick={() => {
+                saveApiKey();
+                setShowSettings(false);
+              }}
+              className="rounded-md bg-amber-500 px-3 py-1.5 text-xs font-medium text-gray-900 hover:bg-amber-400"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Chat area */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
