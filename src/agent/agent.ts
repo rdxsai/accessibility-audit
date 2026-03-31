@@ -80,6 +80,8 @@ export async function runAgent(
       }
 
       inputMessage = buildDataMessage(auditData);
+      console.log('[Agent] Data message length:', inputMessage.length, 'chars');
+      console.log('[Agent] Data message preview (last 500 chars):', inputMessage.slice(-500));
     } else {
       inputMessage = userMessage;
     }
@@ -115,7 +117,12 @@ export async function runAgent(
 // ──────────────────────────────────────────────
 
 function buildDataMessage(data: PageAuditData): string {
-  const { stage2: s2 } = data;
+  const s2 = data.stage2;
+
+  if (!s2 || !s2.contrast || !s2.aria || !s2.focus || !s2.motion || !s2.targetSize) {
+    console.error('[Agent] Stage 2 data is missing or incomplete:', data.stage2);
+    return `Page: ${data.url}\n\nWARNING: Stage 2 programmatic audits returned no data. Only axe-core results available.\n\n## axe-core results:\n${JSON.stringify(data.axeViolations, null, 2)}\n\nReport the axe-core violations and note that programmatic audits failed.`;
+  }
 
   let msg = `Page: ${data.url}\nTimestamp: ${new Date(data.timestamp).toISOString()}\n\nBelow is ALL audit data from Stages 1-3. Deduplicate overlapping findings (axe-core and Stage 2 may both flag the same contrast issue — merge them). Map each issue to a WCAG SC, assess severity, and produce the report.\n\n`;
 

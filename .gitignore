@@ -5,3 +5,5 @@ mcp-server/wcag.db
 mcp-server/__pycache__/
 *.pyc
 .DS_Store
+.env
+.env.*

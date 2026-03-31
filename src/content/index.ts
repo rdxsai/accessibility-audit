@@ -53,9 +53,30 @@ chrome.runtime.onMessage.addListener(
         break;
 
       // ─── Stage 2: Programmatic audits ─────
-      case 'RUN_AUDITS':
-        sendResponse(runAllAudits());
-        break;
+      // Must be async (return true) because the audits walk
+      // the entire DOM and can take seconds. Chrome closes
+      // the sendResponse channel if the handler doesn't
+      // return true for async work.
+      case 'RUN_AUDITS': {
+        console.log('[WCAG Scout] Running Stage 2 audits...');
+        setTimeout(() => {
+          try {
+            const auditResults = runAllAudits();
+            console.log('[WCAG Scout] Stage 2 complete:', {
+              contrastFailures: auditResults.contrast.failures.length,
+              ariaButtonIssues: auditResults.aria.buttonsWithIssues.length,
+              ariaSectionIssues: auditResults.aria.sectionsWithIssues.length,
+              noFocusStyle: auditResults.focus.noFocusStyle.length,
+              skipLink: auditResults.focus.skipLink.exists,
+            });
+            sendResponse(auditResults);
+          } catch (e) {
+            console.error('[WCAG Scout] Stage 2 failed:', e);
+            sendResponse(null);
+          }
+        }, 0);
+        return true; // keep channel open for async response
+      }
 
       // ─── Element discovery (for collector) ─
       case 'DISCOVER_ELEMENTS':

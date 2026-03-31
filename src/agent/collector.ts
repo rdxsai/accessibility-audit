@@ -51,6 +51,15 @@ export async function collectPageAuditData(
     { type: 'RUN_AUDITS' } as Message
   );
 
+  // Debug: log what Stage 2 returned
+  console.log('[Collector] Stage 2 results:', {
+    contrast: stage2?.contrast ? `${stage2.contrast.failures.length} failures` : 'MISSING',
+    aria: stage2?.aria ? `${stage2.aria.buttonsWithIssues.length} button issues, ${stage2.aria.sectionsWithIssues.length} section issues` : 'MISSING',
+    focus: stage2?.focus ? `${stage2.focus.noFocusStyle.length} no-focus, skip=${stage2.focus.skipLink.exists}` : 'MISSING',
+    motion: stage2?.motion ? `reducedMotionCSS=${stage2.motion.hasReducedMotionCSS}` : 'MISSING',
+    targetSize: stage2?.targetSize ? `${stage2.targetSize.failuresBelow44.length} below 44px` : 'MISSING',
+  });
+
   return {
     url,
     timestamp: Date.now(),
