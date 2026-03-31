@@ -1,26 +1,23 @@
-import OpenAI from 'openai';
-import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+import { ChatOpenAI } from '@langchain/openai';
+import { createReactAgent } from '@langchain/langgraph/prebuilt';
+import { HumanMessage } from '@langchain/core/messages';
 import { SYSTEM_PROMPT } from './prompt';
-import { toolDeclarations } from './tools';
-import { executeTool } from './executor';
+import { agentTools } from './tools';
 import { collectPageAuditData, type PageAuditData } from './collector';
 
 // ──────────────────────────────────────────────
-// Agent — two-phase architecture:
+// Agent — LangGraph ReAct agent with ChatOpenAI.
 //
-//   Phase 1 (DETERMINISTIC): The collector runs ALL browser
-//   tools programmatically. No LLM involved. Every nav link,
-//   every button, every landmark is inspected. Nothing skipped.
+// Architecture:
+//   Phase 1 (deterministic): collector.ts gathers ALL page data
+//   Phase 2 (LangGraph): ReAct agent analyzes data + verifies
+//     via MCP tools in a proper agent loop
 //
-//   Phase 2 (LLM): The collected data is sent to gpt-4o in
-//   one shot. The LLM analyzes it, identifies issues, and
-//   calls verify_violation to confirm each one against WCAG.
-//
-// Why this is better:
-//   - Data collection never skips steps (it's code, not hope)
-//   - LLM gets the complete picture (not partial tool results)
-//   - LLM only does what it's good at (analysis, not orchestration)
-//   - Fewer API calls (1-3 instead of 10-15)
+// LangGraph gives us:
+//   - Proper ReAct loop (reason → act → observe → repeat)
+//   - Built-in tool execution via ToolNode
+//   - Message state management
+//   - No manual tool-call parsing needed
 // ──────────────────────────────────────────────
 
 let apiKey: string | null = null;
@@ -39,8 +36,6 @@ export async function getApiKey(): Promise<string | null> {
   return null;
 }
 
-const conversationHistory: ChatCompletionMessageParam[] = [];
-
 export async function runAgent(
   userMessage: string,
   tabId: number,
@@ -53,18 +48,26 @@ export async function runAgent(
   }
 
   try {
-    const client = new OpenAI({
+    // ─── Create the LangGraph agent ────────────
+    const model = new ChatOpenAI({
+      model: 'gpt-4o',
+      temperature: 0,
       apiKey: key,
-      dangerouslyAllowBrowser: true,
     });
 
-    // Detect if this is a scan request (vs a follow-up question)
+    const agent = createReactAgent({
+      llm: model,
+      tools: agentTools,
+      prompt: SYSTEM_PROMPT,
+    });
+
+    // ─── Detect scan request ───────────────────
     const isScanRequest = /scan|audit|check|review|accessibility|violations/i.test(userMessage);
 
-    if (isScanRequest) {
-      // ─── Phase 1: Deterministic data collection ──
-      onChunk('', false); // clear any previous state
+    let inputMessage: string;
 
+    if (isScanRequest) {
+      // Phase 1: Deterministic data collection
       let auditData: PageAuditData;
       try {
         auditData = await collectPageAuditData(tabId, (step) => {
@@ -76,112 +79,40 @@ export async function runAgent(
         return;
       }
 
-      // ─── Phase 2: LLM analysis ──────────────────
-      // Build a comprehensive data message for the LLM
-      const dataMessage = buildDataMessage(auditData);
-
-      conversationHistory.push({
-        role: 'user',
-        content: dataMessage,
-      });
+      inputMessage = buildDataMessage(auditData);
     } else {
-      // Follow-up question — just add to conversation
-      conversationHistory.push({
-        role: 'user',
-        content: userMessage,
-      });
+      inputMessage = userMessage;
     }
 
-    // ─── LLM loop (for verification tool calls) ──
-    let loopCount = 0;
-    const MAX_LOOPS = 15;
+    // ─── Phase 2: Run the LangGraph agent ──────
+    console.log('[Agent] Starting LangGraph ReAct agent...');
 
-    while (loopCount < MAX_LOOPS) {
-      loopCount++;
-      console.log(`[Agent] Analysis loop ${loopCount}/${MAX_LOOPS}`);
+    const result = await agent.invoke({
+      messages: [new HumanMessage(inputMessage)],
+    });
 
-      let response;
-      try {
-        response = await client.chat.completions.create({
-          model: 'gpt-4o',
-          messages: [
-            { role: 'system', content: SYSTEM_PROMPT },
-            ...conversationHistory,
-          ],
-          tools: toolDeclarations,
-          tool_choice: 'auto',
-        });
-      } catch (apiError: any) {
-        console.error('[Agent] OpenAI API error:', apiError);
-        onChunk(`Error calling OpenAI API: ${apiError.message || apiError}`, true);
-        return;
-      }
+    // Extract the final assistant message
+    const messages = result.messages;
+    const lastMessage = messages[messages.length - 1];
+    const responseText =
+      typeof lastMessage.content === 'string'
+        ? lastMessage.content
+        : JSON.stringify(lastMessage.content);
 
-      const message = response.choices[0]?.message;
-      if (!message) {
-        onChunk('Error: Empty response from OpenAI.', true);
-        return;
-      }
+    console.log('[Agent] Done. Tool calls made:',
+      messages.filter((m: any) => m._getType?.() === 'tool').length
+    );
 
-      const toolCalls = message.tool_calls;
-
-      if (toolCalls && toolCalls.length > 0) {
-        conversationHistory.push(message);
-
-        for (const toolCall of toolCalls) {
-          if (toolCall.type !== 'function') continue;
-
-          const name = toolCall.function.name;
-          let args: Record<string, unknown> = {};
-          try {
-            args = JSON.parse(toolCall.function.arguments || '{}');
-          } catch {
-            args = {};
-          }
-
-          console.log(`[Agent] Verification tool: ${name}`, args);
-
-          let toolResult: unknown;
-          try {
-            toolResult = await executeTool(name, args, tabId);
-          } catch (toolError: any) {
-            toolResult = { error: `Tool failed: ${toolError.message}` };
-          }
-
-          conversationHistory.push({
-            role: 'tool',
-            tool_call_id: toolCall.id,
-            content: JSON.stringify(toolResult),
-          });
-        }
-
-        continue;
-      }
-
-      // Final text response
-      const fullText = message.content || '';
-      conversationHistory.push({
-        role: 'assistant',
-        content: fullText,
-      });
-
-      onChunk(fullText, true);
-      return;
-    }
-
-    onChunk('Error: Agent exceeded maximum iterations.', true);
+    onChunk(responseText, true);
   } catch (error: any) {
-    console.error('[Agent] Unexpected error:', error);
+    console.error('[Agent] Error:', error);
     onChunk(`Error: ${error.message || 'Something went wrong.'}`, true);
   }
 }
 
 // ──────────────────────────────────────────────
-// Build the data message sent to the LLM.
-//
-// This is a structured text summary of ALL collected data.
-// The LLM reads this and identifies issues — it doesn't
-// need to call browser tools because we already called them.
+// Build the data message for the LLM.
+// Same as before — comprehensive summary of ALL collected data.
 // ──────────────────────────────────────────────
 
 function buildDataMessage(data: PageAuditData): string {
@@ -189,7 +120,6 @@ function buildDataMessage(data: PageAuditData): string {
 
   let msg = `I've scanned the page at ${data.url}. Here is the COMPLETE audit data. Analyze ALL of it and produce a full accessibility report.\n\n`;
 
-  // ─── axe-core violations ───
   msg += `## TIER 1: axe-core Scan Results\n`;
   msg += `Found ${s.totalAxeViolations} automated violations:\n\n`;
   for (const v of data.axeViolations) {
@@ -205,16 +135,14 @@ function buildDataMessage(data: PageAuditData): string {
     msg += '\n';
   }
 
-  // ─── Nav link contrast ───
   msg += `## TIER 2: Navigation Link Contrast\n`;
   msg += `Checked ${s.totalNavLinks} nav links. ${s.navLinksWithLowContrast} have contrast below 4.5:1.\n\n`;
   for (const style of data.navLinkStyles) {
-    const flag = style.contrastRatio !== null && style.contrastRatio < 4.5 ? ' ⚠️ FAILS' : ' ✓';
+    const flag = style.contrastRatio !== null && style.contrastRatio < 4.5 ? ' FAILS' : ' PASSES';
     msg += `- ${style.selector}: color=${style.color}, bg=${style.backgroundColor}, contrast=${style.contrastRatio ?? 'unknown'}:1, fontSize=${style.fontSize}${flag}\n`;
   }
   msg += '\n';
 
-  // ─── Button ARIA states ───
   msg += `## TIER 2: Button ARIA States\n`;
   msg += `Checked ${s.totalButtons} buttons. ${s.buttonsWithoutAriaExpanded} have click listeners but no aria-expanded.\n\n`;
   for (const btn of data.buttonInteractions) {
@@ -226,23 +154,20 @@ function buildDataMessage(data: PageAuditData): string {
   }
   msg += '\n';
 
-  // ─── Focus order ───
   msg += `## TIER 2: Focus Order & Visibility\n`;
   msg += `Total focusable elements: ${s.totalFocusableElements}\n`;
   msg += `Elements without visible focus style: ${s.elementsWithoutVisibleFocus}\n`;
   msg += `Skip navigation link present: ${s.hasSkipLink}\n\n`;
   for (const entry of data.focusOrder.entries.slice(0, 20)) {
-    const icon = entry.hasVisibleFocusStyle ? '✓' : '✗';
-    msg += `${icon} [${entry.index}] <${entry.tagName}> "${entry.textContent.slice(0, 30)}" — outline: ${entry.outlineStyle} ${entry.outlineColor}\n`;
+    const icon = entry.hasVisibleFocusStyle ? 'VISIBLE' : 'NOT_VISIBLE';
+    msg += `[${entry.index}] <${entry.tagName}> "${entry.textContent.slice(0, 30)}" — focus: ${icon}, outline: ${entry.outlineStyle} ${entry.outlineColor}\n`;
   }
   msg += '\n';
 
-  // ─── Landmarks ───
   msg += `## TIER 2: Landmark Structure\n`;
   msg += `Total sections: ${s.totalSections}, without accessible name: ${s.sectionsWithoutAccessibleName}\n`;
   msg += `Landmark count: ${data.domSnapshot.landmarkCount}, Heading count: ${data.domSnapshot.headingCount}\n\n`;
 
-  // ─── Motion ───
   msg += `## TIER 2: Motion & Animation\n`;
   msg += `CSS animations: ${data.motionCheck.cssAnimations.length}\n`;
   msg += `CSS transitions: ${data.motionCheck.cssTransitionCount}\n`;
@@ -254,15 +179,14 @@ function buildDataMessage(data: PageAuditData): string {
   }
   msg += '\n';
 
-  // ─── Summary flags ───
   msg += `## QUICK FLAGS\n`;
-  if (s.navLinksWithLowContrast > 0) msg += `⚠️ ${s.navLinksWithLowContrast} nav links fail contrast\n`;
-  if (s.buttonsWithoutAriaExpanded > 0) msg += `⚠️ ${s.buttonsWithoutAriaExpanded} toggle buttons missing aria-expanded\n`;
-  if (s.elementsWithoutVisibleFocus > 0) msg += `⚠️ ${s.elementsWithoutVisibleFocus} elements have no visible focus indicator\n`;
-  if (!s.hasSkipLink) msg += `⚠️ No skip navigation link\n`;
-  if (s.sectionsWithoutAccessibleName > 0) msg += `⚠️ ${s.sectionsWithoutAccessibleName} sections missing accessible name\n`;
-  if (!s.hasReducedMotionQuery) msg += `⚠️ No prefers-reduced-motion query\n`;
-  if (s.canvasElementsWithoutAriaHidden > 0) msg += `⚠️ ${s.canvasElementsWithoutAriaHidden} canvas elements without aria-hidden\n`;
+  if (s.navLinksWithLowContrast > 0) msg += `- ${s.navLinksWithLowContrast} nav links fail contrast\n`;
+  if (s.buttonsWithoutAriaExpanded > 0) msg += `- ${s.buttonsWithoutAriaExpanded} toggle buttons missing aria-expanded\n`;
+  if (s.elementsWithoutVisibleFocus > 0) msg += `- ${s.elementsWithoutVisibleFocus} elements have no visible focus indicator\n`;
+  if (!s.hasSkipLink) msg += `- No skip navigation link\n`;
+  if (s.sectionsWithoutAccessibleName > 0) msg += `- ${s.sectionsWithoutAccessibleName} sections missing accessible name\n`;
+  if (!s.hasReducedMotionQuery) msg += `- No prefers-reduced-motion query\n`;
+  if (s.canvasElementsWithoutAriaHidden > 0) msg += `- ${s.canvasElementsWithoutAriaHidden} canvas elements without aria-hidden\n`;
 
   msg += `\nUse verify_violation for EACH issue above before reporting it. Report ALL issues found — do not skip any.`;
 
@@ -270,5 +194,6 @@ function buildDataMessage(data: PageAuditData): string {
 }
 
 export function resetConversation(): void {
-  conversationHistory.length = 0;
+  // LangGraph manages its own state per invocation
+  // Nothing to reset unless we add checkpointing later
 }

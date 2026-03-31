@@ -1,4 +1,5 @@
-import type { Message, Violation } from '@shared/messages';
+import type { Violation } from '@shared/messages';
+import type { Message } from '@shared/messages';
 import type {
   DomSnapshotResult,
   ComputedStylesResult,
@@ -6,6 +7,12 @@ import type {
   FocusOrderResult,
   MotionCheckResult,
 } from '@shared/tool-types';
+import { sendToContentScript as _send } from './executor';
+
+// Type-safe wrapper around the executor's sendToContentScript
+function sendToTab<T>(tabId: number, message: Message): Promise<T> {
+  return _send(tabId, message) as Promise<T>;
+}
 
 // ──────────────────────────────────────────────
 // Deterministic data collector.
@@ -60,15 +67,6 @@ export interface PageAuditData {
   };
 }
 
-// Helper to send messages to the content script and get responses
-function sendToContentScript<T>(tabId: number, message: Message): Promise<T> {
-  return new Promise((resolve) => {
-    chrome.tabs.sendMessage(tabId, message, (response: T) => {
-      resolve(response);
-    });
-  });
-}
-
 export async function collectPageAuditData(
   tabId: number,
   onProgress: (step: string) => void
@@ -77,7 +75,7 @@ export async function collectPageAuditData(
 
   // ─── Step 1: axe-core scan ─────────────────
   onProgress('Running axe-core scan...');
-  const scanResult = await sendToContentScript<{ violations: Violation[] }>(
+  const scanResult = await sendToTab<{ violations: Violation[] }>(
     tabId,
     { type: 'SCAN_REQUEST', payload: { scope: 'full' } } as Message
   );
@@ -85,7 +83,7 @@ export async function collectPageAuditData(
 
   // ─── Step 2: DOM snapshot ──────────────────
   onProgress('Analyzing page structure...');
-  const domSnapshot = await sendToContentScript<DomSnapshotResult>(
+  const domSnapshot = await sendToTab<DomSnapshotResult>(
     tabId,
     { type: 'GET_DOM_SNAPSHOT', payload: { selector: 'body', maxDepth: 6 } } as Message
   );
@@ -94,14 +92,14 @@ export async function collectPageAuditData(
   onProgress('Checking navigation link contrast...');
 
   // Find all nav link selectors by querying the page
-  const navLinkSelectors = await sendToContentScript<string[]>(
+  const navLinkSelectors = await sendToTab<string[]>(
     tabId,
     { type: 'DISCOVER_ELEMENTS', payload: { query: 'nav-links' } } as Message
   );
 
   const navLinkStyles: ComputedStylesResult[] = [];
   for (const selector of navLinkSelectors ?? []) {
-    const styles = await sendToContentScript<ComputedStylesResult>(
+    const styles = await sendToTab<ComputedStylesResult>(
       tabId,
       { type: 'GET_COMPUTED_STYLES', payload: { selector } } as Message
     );
@@ -111,14 +109,14 @@ export async function collectPageAuditData(
   // ─── Step 4: Discover and check buttons ────
   onProgress('Checking button ARIA states...');
 
-  const buttonSelectors = await sendToContentScript<string[]>(
+  const buttonSelectors = await sendToTab<string[]>(
     tabId,
     { type: 'DISCOVER_ELEMENTS', payload: { query: 'buttons' } } as Message
   );
 
   const buttonInteractions: ElementInteractionsResult[] = [];
   for (const selector of buttonSelectors ?? []) {
-    const interactions = await sendToContentScript<ElementInteractionsResult>(
+    const interactions = await sendToTab<ElementInteractionsResult>(
       tabId,
       { type: 'GET_ELEMENT_INTERACTIONS', payload: { selector } } as Message
     );
@@ -127,14 +125,14 @@ export async function collectPageAuditData(
 
   // ─── Step 5: Focus order ───────────────────
   onProgress('Testing keyboard navigation...');
-  const focusOrder = await sendToContentScript<FocusOrderResult>(
+  const focusOrder = await sendToTab<FocusOrderResult>(
     tabId,
     { type: 'CHECK_FOCUS_ORDER', payload: { maxElements: 50 } } as Message
   );
 
   // ─── Step 6: Motion check ──────────────────
   onProgress('Checking animations...');
-  const motionCheck = await sendToContentScript<MotionCheckResult>(
+  const motionCheck = await sendToTab<MotionCheckResult>(
     tabId,
     { type: 'CHECK_MOTION' } as Message
   );
