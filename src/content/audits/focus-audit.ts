@@ -125,6 +125,21 @@ export function runFocusAudit(): FocusAuditResult {
     focusSelectors: [],
   };
 
+  // ─── 0. Pre-scan CSS rules for :focus-visible ──
+  // We need this BEFORE diffing so we can cross-reference.
+  // .focus() triggers :focus but NOT :focus-visible.
+  // If an element has no diff but IS matched by a :focus-visible
+  // CSS rule, it likely HAS a focus style — we just can't detect
+  // it programmatically without keyboard simulation.
+  inspectFocusCSS(result);
+
+  const focusVisibleMatchSet = new Set<string>();
+  for (const sel of result.focusVisibleSelectors) {
+    // Extract base selector from ":focus-visible" rule
+    const base = sel.replace(/:focus-visible/g, '').trim();
+    if (base) focusVisibleMatchSet.add(base);
+  }
+
   // ─── 1. Focus style diffing ────────────────
   for (const el of focusable.slice(0, 50)) {
     const htmlEl = el as HTMLElement;
@@ -190,7 +205,25 @@ export function runFocusAudit(): FocusAuditResult {
     };
 
     if (!hasCustom) {
-      result.noFocusStyle.push(finding);
+      // Before flagging as "no focus", check if a :focus-visible
+      // CSS rule matches this element. If so, it probably HAS a
+      // focus style that we can't detect via .focus().
+      let matchedByFocusVisible = false;
+      for (const baseSel of focusVisibleMatchSet) {
+        try {
+          if (el.matches(baseSel)) {
+            matchedByFocusVisible = true;
+            break;
+          }
+        } catch {}
+      }
+
+      if (matchedByFocusVisible) {
+        // Has a :focus-visible rule — count as good (can't verify style quality)
+        result.goodFocusStyle++;
+      } else {
+        result.noFocusStyle.push(finding);
+      }
     } else if (!sufficient) {
       result.insufficientContrast.push(finding);
     } else if (thinWarning) {
@@ -228,8 +261,7 @@ export function runFocusAudit(): FocusAuditResult {
     }
   }
 
-  // ─── 3. CSS rule inspection ────────────────
-  inspectFocusCSS(result);
+  // CSS rules already inspected in step 0 above
 
   return result;
 }

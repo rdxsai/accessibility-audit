@@ -56,85 +56,105 @@ export function runContrastAudit(): ContrastAuditResult {
   let totalTextElements = 0;
   let passes = 0;
 
-  // TreeWalker is the most efficient way to visit every text node
-  const walker = document.createTreeWalker(
-    document.body,
-    NodeFilter.SHOW_TEXT,
-    {
-      acceptNode(node) {
-        const text = node.textContent?.trim();
-        if (!text || text.length === 0) return NodeFilter.FILTER_REJECT;
+  // Walk the main document
+  walkDocument(document, '');
 
-        const parent = node.parentElement;
-        if (!parent) return NodeFilter.FILTER_REJECT;
-
-        const tag = parent.tagName.toLowerCase();
-        if (SKIP_TAGS.has(tag)) return NodeFilter.FILTER_REJECT;
-
-        // Skip aria-hidden elements
-        if (parent.closest('[aria-hidden="true"]')) return NodeFilter.FILTER_REJECT;
-
-        // Skip invisible elements
-        const style = getComputedStyle(parent);
-        if (
-          style.display === 'none' ||
-          style.visibility === 'hidden' ||
-          style.opacity === '0' ||
-          parent.offsetWidth === 0 ||
-          parent.offsetHeight === 0
-        ) {
-          return NodeFilter.FILTER_REJECT;
+  // Walk same-origin iframes
+  try {
+    const iframes = document.querySelectorAll('iframe');
+    for (const iframe of iframes) {
+      try {
+        const iframeDoc = (iframe as HTMLIFrameElement).contentDocument;
+        if (iframeDoc?.body) {
+          const iframeSelector = buildSelector(iframe);
+          walkDocument(iframeDoc, `${iframeSelector} >> `);
         }
-
-        return NodeFilter.FILTER_ACCEPT;
-      },
+      } catch {
+        // Cross-origin iframe — can't access contentDocument
+      }
     }
-  );
+  } catch {}
 
-  let node: Node | null;
-  while ((node = walker.nextNode())) {
-    if (seenCombos.size >= MAX_UNIQUE_COMBOS) break;
+  function walkDocument(doc: Document, selectorPrefix: string) {
+    const root = doc.body;
+    if (!root) return;
 
-    const parent = node.parentElement!;
-    totalTextElements++;
+    const walker = doc.createTreeWalker(
+      root,
+      NodeFilter.SHOW_TEXT,
+      {
+        acceptNode(node) {
+          const text = node.textContent?.trim();
+          if (!text || text.length === 0) return NodeFilter.FILTER_REJECT;
 
-    const style = getComputedStyle(parent);
-    const fgColor = style.color;
-    const bgColor = getEffectiveBgColor(parent);
+          const parent = node.parentElement;
+          if (!parent) return NodeFilter.FILTER_REJECT;
 
-    // Deduplicate by color combo
-    const comboKey = `${fgColor}|${bgColor}`;
-    if (seenCombos.has(comboKey)) continue;
-    seenCombos.add(comboKey);
+          const tag = parent.tagName.toLowerCase();
+          if (SKIP_TAGS.has(tag)) return NodeFilter.FILTER_REJECT;
 
-    const fgRgb = parseRgb(fgColor);
-    const bgRgb = parseRgb(bgColor);
-    if (!fgRgb || !bgRgb) continue;
+          if (parent.closest('[aria-hidden="true"]')) return NodeFilter.FILTER_REJECT;
 
-    const blended = blendAlpha(fgRgb, bgRgb);
-    const ratio = contrastRatio(blended, bgRgb) as number;
+          const style = doc.defaultView!.getComputedStyle(parent);
+          if (
+            style.display === 'none' ||
+            style.visibility === 'hidden' ||
+            style.opacity === '0' ||
+            parent.offsetWidth === 0 ||
+            parent.offsetHeight === 0
+          ) {
+            return NodeFilter.FILTER_REJECT;
+          }
 
-    const fontSize = parseFloat(style.fontSize);
-    const fontWeight = parseInt(style.fontWeight) || 400;
-    const isLargeText = fontSize >= 18 || (fontSize >= 14 && fontWeight >= 700);
-    const requiredRatio = isLargeText ? 3 : 4.5;
-    const ok = ratio >= requiredRatio;
+          return NodeFilter.FILTER_ACCEPT;
+        },
+      }
+    );
 
-    if (ok) {
-      passes++;
-    } else {
-      failures.push({
-        selector: buildSelector(parent),
-        text: (node.textContent?.trim() ?? '').slice(0, 60),
-        fgColor,
-        bgColor,
-        contrastRatio: Math.round(ratio * 100) / 100,
-        fontSize: style.fontSize,
-        fontWeight: style.fontWeight,
-        isLargeText,
-        requiredRatio,
-        passes: false,
-      });
+    let node: Node | null;
+    while ((node = walker.nextNode())) {
+      if (seenCombos.size >= MAX_UNIQUE_COMBOS) return;
+
+      const parent = node.parentElement!;
+      totalTextElements++;
+
+      const style = doc.defaultView!.getComputedStyle(parent);
+      const fgColor = style.color;
+      const bgColor = getEffectiveBgColor(parent);
+
+      const comboKey = `${fgColor}|${bgColor}`;
+      if (seenCombos.has(comboKey)) continue;
+      seenCombos.add(comboKey);
+
+      const fgRgb = parseRgb(fgColor);
+      const bgRgb = parseRgb(bgColor);
+      if (!fgRgb || !bgRgb) continue;
+
+      const blended = blendAlpha(fgRgb, bgRgb);
+      const ratio = contrastRatio(blended, bgRgb) as number;
+
+      const fontSize = parseFloat(style.fontSize);
+      const fontWeight = parseInt(style.fontWeight) || 400;
+      const isLargeText = fontSize >= 18 || (fontSize >= 14 && fontWeight >= 700);
+      const requiredRatio = isLargeText ? 3 : 4.5;
+      const ok = ratio >= requiredRatio;
+
+      if (ok) {
+        passes++;
+      } else {
+        failures.push({
+          selector: selectorPrefix + buildSelector(parent),
+          text: (node.textContent?.trim() ?? '').slice(0, 60),
+          fgColor,
+          bgColor,
+          contrastRatio: Math.round(ratio * 100) / 100,
+          fontSize: style.fontSize,
+          fontWeight: style.fontWeight,
+          isLargeText,
+          requiredRatio,
+          passes: false,
+        });
+      }
     }
   }
 

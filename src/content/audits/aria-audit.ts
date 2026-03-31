@@ -1,19 +1,21 @@
 // ──────────────────────────────────────────────
-// ARIA audit — checks interactive elements, sections,
+// ARIA audit — checks interactive elements, landmarks,
 // and decorative elements for proper ARIA attributes.
 //
-// Checks:
-//   1. Every <button> → aria-expanded, aria-controls, aria-label
-//   2. Every <section> → aria-label or aria-labelledby
-//   3. Every <canvas>/<svg> → aria-hidden or role="presentation"
-//   4. Every <input>/<select>/<textarea> → associated label
+// Scoping rules (to avoid false positives):
+//   - aria-controls: ONLY required when aria-expanded is present
+//   - aria-expanded: ONLY flag on buttons that suggest toggling
+//     (text contains expand/collapse/show/hide/toggle/menu/etc.)
+//   - accessible name: ONLY required on interactive elements
+//     (button, a, input, select, textarea) and landmarks
+//     (section, nav, main, etc.) — NOT on layout divs
 // ──────────────────────────────────────────────
 
 export interface AriaFinding {
   type: 'button-missing-state' | 'section-missing-name' | 'decorative-not-hidden' | 'input-missing-label';
   selector: string;
-  element: string;        // tag + text excerpt
-  details: string;        // what's missing
+  element: string;
+  details: string;
   ariaExpanded: string | null;
   ariaControls: string | null;
   ariaLabel: string | null;
@@ -46,37 +48,48 @@ export function runAriaAudit(): AriaAuditResult {
   };
 
   // ─── 1. Buttons ────────────────────────────
-  const buttons = document.querySelectorAll(
-    'button, [role="button"], [role="tab"], [role="menuitem"]'
-  );
+  // Only check <button> and [role="button"] — not divs with click handlers
+  const buttons = document.querySelectorAll('button, [role="button"]');
   result.totalButtons = buttons.length;
 
   buttons.forEach((el) => {
+    // Skip hidden buttons
+    const style = getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden') return;
+
     const expanded = el.getAttribute('aria-expanded');
     const controls = el.getAttribute('aria-controls');
     const label = el.getAttribute('aria-label');
+    const labelledBy = el.getAttribute('aria-labelledby');
     const role = el.getAttribute('role');
+    const title = el.getAttribute('title');
     const text = (el.textContent ?? '').trim().slice(0, 40);
 
-    // Heuristic: if the button text suggests toggling (expand, collapse,
-    // show, hide, toggle, menu, more, details) → it should have aria-expanded
-    const suggestsToggle = /expand|collapse|show|hide|toggle|menu|more|detail|open|close/i.test(text);
-
-    // Also check if clicking this button changes visibility of another element
-    // (we can't know for sure without clicking, but missing aria-expanded
-    // on a button is always worth flagging)
     const issues: string[] = [];
 
-    if (expanded === null && (suggestsToggle || controls !== null)) {
-      issues.push('aria-expanded missing');
-    }
+    // Rule 1: If button has aria-expanded but no aria-controls → missing
     if (expanded !== null && controls === null) {
-      issues.push('aria-controls missing (has aria-expanded but no controlled element)');
+      issues.push('has aria-expanded but missing aria-controls');
     }
 
-    // Buttons without any accessible name
-    if (!text && !label && !el.getAttribute('aria-labelledby') && !el.getAttribute('title')) {
-      issues.push('no accessible name (no text, no aria-label, no title)');
+    // Rule 2: If button text strongly suggests toggling but has no aria-expanded
+    // Only flag if the text clearly indicates expand/collapse behavior
+    const suggestsToggle = /^(expand|collapse|show|hide|toggle|open|close)\b/i.test(text)
+      || /\b(expand|collapse)\s*(details|section|content|panel|menu)?$/i.test(text);
+
+    if (expanded === null && suggestsToggle) {
+      issues.push('text suggests toggle behavior but missing aria-expanded');
+    }
+
+    // Rule 3: Button has NO accessible name at all
+    // (no visible text, no aria-label, no aria-labelledby, no title)
+    if (!text && !label && !labelledBy && !title) {
+      // Check for img/svg child with alt
+      const hasImgAlt = el.querySelector('img[alt]:not([alt=""])') !== null;
+      const hasSvgTitle = el.querySelector('svg title') !== null;
+      if (!hasImgAlt && !hasSvgTitle) {
+        issues.push('no accessible name');
+      }
     }
 
     if (issues.length > 0) {
@@ -88,29 +101,40 @@ export function runAriaAudit(): AriaAuditResult {
         ariaExpanded: expanded,
         ariaControls: controls,
         ariaLabel: label,
-        ariaLabelledBy: el.getAttribute('aria-labelledby'),
+        ariaLabelledBy: labelledBy,
         ariaHidden: el.getAttribute('aria-hidden'),
         role,
       });
     }
   });
 
-  // ─── 2. Sections ───────────────────────────
-  const sections = document.querySelectorAll(
-    'section, [role="region"]'
-  );
+  // ─── 2. Landmarks (sections with region role) ───
+  // Only sections need accessible names — they become "region" landmarks
+  // and screen readers list them. Without a name, "region" is meaningless.
+  // Note: <main>, <nav>, <header>, <footer> have implicit roles and don't
+  // strictly need aria-label (their role IS their name), but <section> does.
+  const sections = document.querySelectorAll('section');
   result.totalSections = sections.length;
 
   sections.forEach((el) => {
+    // Skip hidden sections
+    const style = getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden') return;
+
     const label = el.getAttribute('aria-label');
     const labelledBy = el.getAttribute('aria-labelledby');
+
+    // Check if section has a heading child that could serve as its label
+    const hasHeading = el.querySelector('h1, h2, h3, h4, h5, h6') !== null;
 
     if (!label && !labelledBy) {
       result.sectionsWithIssues.push({
         type: 'section-missing-name',
         selector: buildSelector(el),
         element: `<section${el.id ? ` id="${el.id}"` : ''}>`,
-        details: 'No aria-label or aria-labelledby — screen readers cannot distinguish this from other sections',
+        details: hasHeading
+          ? 'No aria-label/aria-labelledby — has heading child, use aria-labelledby to reference it'
+          : 'No aria-label or aria-labelledby',
         ariaExpanded: null,
         ariaControls: null,
         ariaLabel: label,
@@ -121,54 +145,69 @@ export function runAriaAudit(): AriaAuditResult {
     }
   });
 
-  // ─── 3. Decorative elements ────────────────
+  // ─── 3. Decorative elements (canvas/svg) ───
+  // Only flag standalone canvas/svg that aren't inside interactive elements
+  // and don't have aria-hidden or role="presentation"
   const decorative = document.querySelectorAll('canvas, svg');
   result.totalDecorativeElements = decorative.length;
 
   decorative.forEach((el) => {
+    // Skip SVGs inside buttons/links — they're functional icons, not decorative
+    if (el.closest('a, button, [role="button"], [role="link"]')) return;
+
+    // Skip tiny SVGs (likely icons handled by parent)
+    if (el.tagName.toLowerCase() === 'svg') {
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 5 || rect.height < 5) return;
+    }
+
+    // Skip hidden elements
+    const style = getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden') return;
+
     const ariaHidden = el.getAttribute('aria-hidden');
     const role = el.getAttribute('role');
-    const tag = el.tagName.toLowerCase();
-
-    // SVGs that are inside buttons/links are functional, not decorative
-    if (el.closest('a, button, [role="button"], [role="link"]')) return;
 
     const isHidden = ariaHidden === 'true' || role === 'presentation' || role === 'none';
 
     if (!isHidden) {
-      // Check if it has meaningful alt/label
       const label = el.getAttribute('aria-label');
       const labelledBy = el.getAttribute('aria-labelledby');
 
-      if (!label && !labelledBy) {
-        result.decorativeWithIssues.push({
-          type: 'decorative-not-hidden',
-          selector: buildSelector(el),
-          element: `<${tag}${el.className ? ` class="${(el.className as any).baseVal ?? el.className}"` : ''}>`,
-          details: `No aria-hidden="true" or role="presentation" — screen readers will attempt to announce this ${tag}`,
-          ariaExpanded: null,
-          ariaControls: null,
-          ariaLabel: label,
-          ariaLabelledBy: labelledBy,
-          ariaHidden: ariaHidden,
-          role,
-        });
-      }
+      // If it has a meaningful label, it's intentionally exposed — not a problem
+      if (label || labelledBy) return;
+
+      result.decorativeWithIssues.push({
+        type: 'decorative-not-hidden',
+        selector: buildSelector(el),
+        element: `<${el.tagName.toLowerCase()}${el.className ? ` class="${(el.className as any).baseVal ?? el.className}"` : ''}>`,
+        details: `Not hidden from assistive technology — add aria-hidden="true" if decorative`,
+        ariaExpanded: null,
+        ariaControls: null,
+        ariaLabel: label,
+        ariaLabelledBy: labelledBy,
+        ariaHidden: ariaHidden,
+        role,
+      });
     }
   });
 
   // ─── 4. Inputs without labels ──────────────
+  // Only actual form controls — not hidden inputs, not submit/button types
   const inputs = document.querySelectorAll(
-    'input:not([type="hidden"]):not([type="submit"]):not([type="button"]), select, textarea'
+    'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="image"]), select, textarea'
   );
   result.totalInputs = inputs.length;
 
   inputs.forEach((el) => {
+    // Skip hidden inputs
+    const style = getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden') return;
+
     const id = el.id;
     const label = el.getAttribute('aria-label');
     const labelledBy = el.getAttribute('aria-labelledby');
     const title = el.getAttribute('title');
-    const placeholder = el.getAttribute('placeholder');
 
     // Check for associated <label>
     const hasLabel = id
@@ -180,7 +219,7 @@ export function runAriaAudit(): AriaAuditResult {
         type: 'input-missing-label',
         selector: buildSelector(el),
         element: `<${el.tagName.toLowerCase()} type="${el.getAttribute('type') ?? 'text'}">`,
-        details: `No associated <label>, no aria-label, no aria-labelledby, no title${placeholder ? ` (has placeholder="${placeholder}" but that's not sufficient)` : ''}`,
+        details: `No associated label, no aria-label, no aria-labelledby, no title`,
         ariaExpanded: null,
         ariaControls: null,
         ariaLabel: label,
