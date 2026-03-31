@@ -52,6 +52,11 @@ chrome.runtime.onMessage.addListener(
         sendResponse(checkMotion());
         break;
 
+      // ─── Element discovery (for collector) ─
+      case 'DISCOVER_ELEMENTS':
+        sendResponse(discoverElements(message.payload.query));
+        break;
+
       // ─── Page interaction tools ───────────
       case 'HIGHLIGHT_ELEMENT':
         highlightElement(message.payload.selector);
@@ -136,6 +141,92 @@ function clearHighlights(): void {
   document
     .querySelectorAll('[data-wcag-scout-highlight]')
     .forEach((el) => delete (el as HTMLElement).dataset.wcagScoutHighlight);
+}
+
+// ──────────────────────────────────────────────
+// Element discovery
+//
+// Returns unique CSS selectors for all elements of a given
+// type. Used by the collector to enumerate elements BEFORE
+// inspecting each one — so nothing gets missed.
+// ──────────────────────────────────────────────
+
+function discoverElements(query: string): string[] {
+  const selectors: string[] = [];
+
+  function makeSelector(el: Element, index: number, tag: string): string {
+    if (el.id) return `#${el.id}`;
+    const cls =
+      el.className && typeof el.className === 'string'
+        ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.')
+        : '';
+    // Use nth-of-type for uniqueness
+    return `${tag}${cls}:nth-of-type(${index + 1})`;
+  }
+
+  switch (query) {
+    case 'nav-links': {
+      // All links inside nav, header, or with nav-related classes
+      const links = document.querySelectorAll(
+        'nav a, header a, [role="navigation"] a'
+      );
+      const seen = new Set<Element>();
+      links.forEach((el, i) => {
+        if (!seen.has(el)) {
+          seen.add(el);
+          // Build a precise selector using parent context
+          const parent = el.closest('nav, header, [role="navigation"]');
+          const parentSel = parent?.tagName.toLowerCase() ?? 'body';
+          const siblings = parent
+            ? Array.from(parent.querySelectorAll('a'))
+            : [el];
+          const idx = siblings.indexOf(el) + 1;
+          selectors.push(`${parentSel} a:nth-of-type(${idx})`);
+        }
+      });
+      break;
+    }
+
+    case 'buttons': {
+      const buttons = document.querySelectorAll(
+        'button, [role="button"], input[type="button"], input[type="submit"]'
+      );
+      buttons.forEach((el, i) => {
+        const tag = el.tagName.toLowerCase();
+        if (el.id) {
+          selectors.push(`#${el.id}`);
+        } else {
+          const cls =
+            el.className && typeof el.className === 'string'
+              ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.')
+              : '';
+          // Use a parent-scoped nth selector for uniqueness
+          selectors.push(`${tag}${cls}:nth-of-type(${i + 1})`);
+        }
+      });
+      break;
+    }
+
+    case 'sections': {
+      const sections = document.querySelectorAll('section, [role="region"]');
+      sections.forEach((el, i) => {
+        if (el.id) selectors.push(`#${el.id}`);
+        else selectors.push(`section:nth-of-type(${i + 1})`);
+      });
+      break;
+    }
+
+    case 'headings': {
+      const headings = document.querySelectorAll('h1, h2, h3, h4, h5, h6');
+      headings.forEach((el, i) => {
+        const tag = el.tagName.toLowerCase();
+        selectors.push(el.id ? `#${el.id}` : `${tag}:nth-of-type(${i + 1})`);
+      });
+      break;
+    }
+  }
+
+  return selectors;
 }
 
 console.log('[WCAG Scout] Content script loaded');

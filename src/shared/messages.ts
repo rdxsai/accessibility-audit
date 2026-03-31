@@ -90,6 +90,13 @@ export type TabToElementMsg = {
   payload: TabToElementParams;
 };
 
+// Collector asks content script to find all elements of a type
+// Returns CSS selectors for each found element
+export type DiscoverElements = {
+  type: 'DISCOVER_ELEMENTS';
+  payload: { query: 'nav-links' | 'buttons' | 'sections' | 'headings' };
+};
+
 // ─── Union of all messages ───────────────────
 
 export type Message =
@@ -107,7 +114,8 @@ export type Message =
   | CheckFocusOrderMsg
   | CheckMotionMsg
   | ClickElementMsg
-  | TabToElementMsg;
+  | TabToElementMsg
+  | DiscoverElements;
 
 // ──────────────────────────────────────────────
 // Core data types
