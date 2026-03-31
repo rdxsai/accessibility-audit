@@ -192,25 +192,56 @@ function buildDataMessage(data: PageAuditData): string {
   }
   msg += '\n';
 
-  // ─── Stage 2: Focus ────────────────────────
+  // ─── Stage 2: Focus (style diffing) ────────
   msg += `## STAGE 2e: Focus Audit\n`;
-  msg += `Skip link: ${s2.focus.hasSkipLink ? 'YES' : 'NO'}\n`;
-  msg += `First focusable: ${s2.focus.firstFocusableElement} "${s2.focus.firstFocusableText}"\n`;
-  msg += `:focus-visible CSS rules: ${s2.focus.focusVisibleRules.length}\n`;
-  for (const r of s2.focus.focusVisibleRules) {
-    msg += `  ${r.selectorText} → ${r.properties.join(', ')}\n`;
+  msg += `Checked ${s2.focus.elementsChecked} of ${s2.focus.totalFocusableElements} focusable elements\n\n`;
+
+  msg += `### No focus style (${s2.focus.noFocusStyle.length} elements)\n`;
+  msg += `These elements show NO visual change when focused — keyboard users cannot see where they are:\n`;
+  for (const f of s2.focus.noFocusStyle) {
+    msg += `  <${f.tagName}> "${f.textContent}" at ${f.selector} — bg: ${f.backgroundColor}\n`;
   }
-  msg += `:focus CSS rules: ${s2.focus.focusRules.length}\n`;
-  for (const r of s2.focus.focusRules) {
-    msg += `  ${r.selectorText} → ${r.properties.join(', ')}\n`;
+  msg += '\n';
+
+  if (s2.focus.insufficientContrast.length > 0) {
+    msg += `### Insufficient focus indicator contrast (${s2.focus.insufficientContrast.length})\n`;
+    msg += `These have focus styles but the indicator color has < 3:1 contrast vs background:\n`;
+    for (const f of s2.focus.insufficientContrast) {
+      msg += `  <${f.tagName}> "${f.textContent}" — indicator contrast: ${f.indicatorContrast}:1, outline: ${f.focusOutline}\n`;
+    }
+    msg += '\n';
   }
-  msg += `Elements WITH custom focus: ${s2.focus.elementsWithCustomFocus.length}\n`;
-  for (const e of s2.focus.elementsWithCustomFocus.slice(0, 5)) {
-    msg += `  ${e}\n`;
+
+  if (s2.focus.thinOutline.length > 0) {
+    msg += `### Thin outline warning (${s2.focus.thinOutline.length})\n`;
+    msg += `These have focus styles but outline < 2px — may be hard to see:\n`;
+    for (const f of s2.focus.thinOutline) {
+      msg += `  <${f.tagName}> "${f.textContent}" — ${f.outlineWidthPx}px outline\n`;
+    }
+    msg += '\n';
   }
-  msg += `Elements WITHOUT custom focus: ${s2.focus.elementsWithoutCustomFocus.length}\n`;
-  for (const e of s2.focus.elementsWithoutCustomFocus) {
-    msg += `  ${e}\n`;
+
+  msg += `Good focus styles: ${s2.focus.goodFocusStyle} elements\n\n`;
+
+  msg += `### Skip Link\n`;
+  msg += `Exists: ${s2.focus.skipLink.exists}\n`;
+  if (s2.focus.skipLink.exists) {
+    msg += `  Text: "${s2.focus.skipLink.text}", href: ${s2.focus.skipLink.href}\n`;
+    msg += `  Target ID exists: ${s2.focus.skipLink.targetExists}\n`;
+    msg += `  Visually hidden by default: ${s2.focus.skipLink.isVisuallyHiddenByDefault}\n`;
+    msg += `  Becomes visible on focus: ${s2.focus.skipLink.becomesVisibleOnFocus}\n`;
+  }
+  msg += '\n';
+
+  msg += `### CSS Focus Rules\n`;
+  msg += `:focus-visible rules: ${s2.focus.focusVisibleRuleCount} (${s2.focus.focusVisibleSelectors.join(', ') || 'none'})\n`;
+  msg += `:focus rules: ${s2.focus.focusRuleCount} (${s2.focus.focusSelectors.join(', ') || 'none'})\n`;
+
+  if (s2.focus.tabindexAnomalies.length > 0) {
+    msg += `\n### Tab Order Anomalies\n`;
+    for (const a of s2.focus.tabindexAnomalies) {
+      msg += `  ${a}\n`;
+    }
   }
   msg += '\n';
 
@@ -221,8 +252,10 @@ function buildDataMessage(data: PageAuditData): string {
   if (s2.aria.sectionsWithIssues.length > 0) msg += `- ${s2.aria.sectionsWithIssues.length} sections missing accessible name\n`;
   if (s2.aria.decorativeWithIssues.length > 0) msg += `- ${s2.aria.decorativeWithIssues.length} decorative elements not hidden from AT\n`;
   if (s2.aria.inputsWithIssues.length > 0) msg += `- ${s2.aria.inputsWithIssues.length} inputs without labels\n`;
-  if (!s2.focus.hasSkipLink) msg += `- No skip navigation link\n`;
-  if (s2.focus.elementsWithoutCustomFocus.length > 0) msg += `- ${s2.focus.elementsWithoutCustomFocus.length} elements without custom focus style\n`;
+  if (!s2.focus.skipLink.exists) msg += `- No skip navigation link\n`;
+  if (s2.focus.noFocusStyle.length > 0) msg += `- ${s2.focus.noFocusStyle.length} elements have NO focus indicator\n`;
+  if (s2.focus.insufficientContrast.length > 0) msg += `- ${s2.focus.insufficientContrast.length} focus indicators have insufficient contrast\n`;
+  if (s2.focus.thinOutline.length > 0) msg += `- ${s2.focus.thinOutline.length} elements have thin (< 2px) outlines\n`;
   if (!s2.motion.hasReducedMotionCSS && !s2.motion.hasReducedMotionJS) msg += `- No prefers-reduced-motion support\n`;
   if (s2.targetSize.failuresBelow24.length > 0) msg += `- ${s2.targetSize.failuresBelow24.length} targets below 24px minimum\n`;
   if (s2.targetSize.failuresBelow44.length > 0) msg += `- ${s2.targetSize.failuresBelow44.length} targets below 44px best practice\n`;

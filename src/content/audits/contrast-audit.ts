@@ -1,3 +1,11 @@
+import {
+  parseRgb,
+  blendAlpha,
+  contrastRatio,
+  getEffectiveBgColor,
+  buildSelector,
+} from './color-utils';
+
 // ──────────────────────────────────────────────
 // Contrast audit — walks EVERY visible text element.
 //
@@ -104,7 +112,7 @@ export function runContrastAudit(): ContrastAuditResult {
     if (!fgRgb || !bgRgb) continue;
 
     const blended = blendAlpha(fgRgb, bgRgb);
-    const ratio = contrastRatio(blended, bgRgb);
+    const ratio = contrastRatio(blended, bgRgb) as number;
 
     const fontSize = parseFloat(style.fontSize);
     const fontWeight = parseInt(style.fontWeight) || 400;
@@ -138,69 +146,4 @@ export function runContrastAudit(): ContrastAuditResult {
   };
 }
 
-// ─── Color math ──────────────────────────────
-
-interface Rgb { r: number; g: number; b: number; a: number; }
-
-function parseRgb(color: string): Rgb | null {
-  const m = color.match(
-    /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\s*\)/
-  );
-  if (!m) return null;
-  return {
-    r: parseInt(m[1]), g: parseInt(m[2]), b: parseInt(m[3]),
-    a: m[4] !== undefined ? parseFloat(m[4]) : 1,
-  };
-}
-
-function blendAlpha(fg: Rgb, bg: Rgb): Rgb {
-  const a = fg.a;
-  return {
-    r: Math.round(fg.r * a + bg.r * (1 - a)),
-    g: Math.round(fg.g * a + bg.g * (1 - a)),
-    b: Math.round(fg.b * a + bg.b * (1 - a)),
-    a: 1,
-  };
-}
-
-function luminance(rgb: Rgb): number {
-  const [r, g, b] = [rgb.r, rgb.g, rgb.b].map((c) => {
-    const s = c / 255;
-    return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
-  });
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-}
-
-function contrastRatio(fg: Rgb, bg: Rgb): number {
-  const l1 = luminance(fg);
-  const l2 = luminance(bg);
-  const lighter = Math.max(l1, l2);
-  const darker = Math.min(l1, l2);
-  return (lighter + 0.05) / (darker + 0.05);
-}
-
-// Walk up ancestors to find the first opaque background
-function getEffectiveBgColor(el: HTMLElement): string {
-  let current: HTMLElement | null = el;
-  while (current) {
-    const bg = getComputedStyle(current).backgroundColor;
-    const rgb = parseRgb(bg);
-    if (rgb && rgb.a >= 1) return bg;
-    current = current.parentElement;
-  }
-  return 'rgb(255, 255, 255)'; // browser default
-}
-
-function buildSelector(el: HTMLElement): string {
-  if (el.id) return `#${el.id}`;
-  const tag = el.tagName.toLowerCase();
-  const cls = el.className && typeof el.className === 'string'
-    ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.')
-    : '';
-  const parent = el.parentElement;
-  if (parent) {
-    const parentTag = parent.id ? `#${parent.id}` : parent.tagName.toLowerCase();
-    return `${parentTag} > ${tag}${cls}`;
-  }
-  return `${tag}${cls}`;
-}
+// Color math imported from ./color-utils.ts
