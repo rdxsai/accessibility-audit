@@ -20,8 +20,20 @@ export function sendToContentScript(
   message: Message
 ): Promise<unknown> {
   return new Promise((resolve) => {
+    // Timeout after 30s — if content script doesn't respond, don't hang forever
+    const timer = setTimeout(() => {
+      console.error(`[Executor] Timeout waiting for ${message.type} response`);
+      resolve({ error: `Content script did not respond to ${message.type} within 30s` });
+    }, 30000);
+
     chrome.tabs.sendMessage(tabId, message, (response) => {
-      resolve(response ?? { error: 'No response from content script' });
+      clearTimeout(timer);
+      if (chrome.runtime.lastError) {
+        console.error(`[Executor] Chrome error for ${message.type}:`, chrome.runtime.lastError.message);
+        resolve({ error: chrome.runtime.lastError.message });
+      } else {
+        resolve(response ?? { error: 'No response from content script' });
+      }
     });
   });
 }
